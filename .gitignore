@@ -1,0 +1,6 @@
+node_modules/
+__pycache__/
+*.pdf
+test-downloads/
+.qa/
+_site/

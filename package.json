@@ -1,0 +1,21 @@
+{
+  "name": "citation-workflow",
+  "version": "1.0.0",
+  "description": "Windows DOI to PubMed PDF and citation workflow",
+  "main": "index.js",
+  "scripts": {
+    "build": "esbuild citation-entry.js --bundle --minify --outfile=vendor/citation.js",
+    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "@citation-js/core": "^0.9.0",
+    "@citation-js/plugin-bibtex": "^0.9.0",
+    "@citation-js/plugin-csl": "^0.9.0",
+    "esbuild": "^0.28.2"
+  },
+  "private": true
+}

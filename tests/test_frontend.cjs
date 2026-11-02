@@ -1,0 +1,13 @@
+const assert=require('node:assert/strict');
+const vm=require('node:vm');
+const fs=require('node:fs');
+const source=fs.readFileSync('app.js','utf8').split('function notice(')[0];
+const context=vm.createContext({localStorage:{getItem:()=>null},document:{getElementById:()=>null}});
+vm.runInContext(source,context);
+assert.equal(context.normalizeDOI(' https://doi.org/10.1234/Test '),'10.1234/Test');
+assert.equal(context.normalizeFolder('"D:/Papers"'),'D:\\Papers');
+assert.throws(()=>context.normalizeFolder('Papers'));
+assert.equal(context.sentenceCase('The Role of DNA in Repair: Evidence From mRNA'),'The role of DNA in repair: Evidence from mRNA');
+assert.equal(context.sentenceCase('Studies in Parkinson Disease and Drosophila','Parkinson, Drosophila'),'Studies in Parkinson disease and Drosophila');
+assert.equal(context.journalCase('the journal of biology and medicine'),'The Journal of Biology and Medicine');
+console.log('6 frontend parsing and biology case checks passed');
