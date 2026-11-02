@@ -8,7 +8,9 @@ import os
 from pathlib import Path
 import re
 import secrets
+import subprocess
 import socket
+import tempfile
 import threading
 import time
 import webbrowser
@@ -181,6 +183,92 @@ def find_pdf(url):
     raise ValueError('No directly accessible PDF found. Sign-in or manual verification may be required.')
 
 
+class SearchLinks(HTMLParser):
+    def __init__(self):
+        super().__init__(); self.urls = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == 'a':
+            self.urls.append(dict(attrs).get('href', ''))
+
+
+def browser_search(url):
+    """Render search with an isolated, hidden browser; never reuse a signed-in profile."""
+    browsers = []
+    for base in (os.environ.get('PROGRAMFILES', ''), os.environ.get('PROGRAMFILES(X86)', ''), os.environ.get('LOCALAPPDATA', '')):
+        if base:
+            browsers.extend([Path(base)/'Google/Chrome/Application/chrome.exe', Path(base)/'Microsoft/Edge/Application/msedge.exe'])
+    browser = next((path for path in browsers if path.is_file()), None)
+    if not browser:
+        raise ValueError('Chrome or Edge was not found for browser search.')
+    with tempfile.TemporaryDirectory(prefix='citation-search-') as profile:
+        result = subprocess.run([str(browser), '--headless=new', '--disable-gpu', '--no-first-run',
+                                 '--no-default-browser-check', '--user-data-dir='+profile,
+                                 '--dump-dom', '--timeout=15000', '--virtual-time-budget=5000', url],
+                                capture_output=True, timeout=30,
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+        if result.returncode or not result.stdout:
+            raise ValueError('Browser search did not return a search page.')
+        return result.stdout
+
+
+def discover_mirrors():
+    """Discover candidates afresh; PDF retrieval below checks actual availability."""
+    errors = []
+    engines = ('https://www.google.com/search?q=', 'https://html.duckduckgo.com/html/?q=')
+    searches = [(engine, False) for engine in engines] + [(engine, True) for engine in engines]
+    for engine, rendered in searches:
+        try:
+            url = engine + U.quote('Sci-Hub active mirror')
+            data = browser_search(url) if rendered else fetch(url, 'text/html')[0]
+            links = SearchLinks(); links.feed(data.decode('utf-8', 'replace'))
+            mirrors = []
+            for href in links.urls:
+                parts = U.urlsplit(html.unescape(href))
+                query = U.parse_qs(parts.query)
+                candidate = (query.get('uddg') or query.get('q') or query.get('url') or [href])[0]
+                parsed = U.urlsplit(candidate)
+                # Only direct Sci-Hub domains, never a search-result lookalike or private host.
+                if parsed.scheme == 'https' and re.fullmatch(r'(?:www\.)?sci-hub\.[a-z]{2,12}', parsed.hostname or ''):
+                    origin = 'https://' + parsed.hostname
+                    safe_url(origin)
+                    if origin not in mirrors:
+                        mirrors.append(origin)
+            if mirrors:
+                return mirrors[:3], errors
+            errors.append('Sci-Hub discovery: search returned no eligible mirror links.')
+        except Exception as e:
+            errors.append('Sci-Hub discovery: ' + str(e))
+    return [], errors
+
+
+def pmc_sources(record):
+    return [source for source in record['sources'] if source['name'] == 'PubMed Central'], []
+
+
+def scihub_sources(record):
+    mirrors, errors = discover_mirrors()
+    return [{'name':'Sci-Hub', 'url':mirror+'/'+U.quote(record['doi'], safe='/')} for mirror in mirrors], errors
+
+
+# Add future database adapters here. Each returns (candidate sources, discovery errors).
+DATABASE_PROVIDERS = (pmc_sources, scihub_sources)
+
+
+def publisher_choices(record):
+    choices = []
+    urls = [record['publisher'], record['csl'].get('URL', '')]
+    for url in urls:
+        try:
+            safe_url(url)
+            if url and url not in [choice['url'] for choice in choices]:
+                choices.append({'name':'Publisher · '+(record['csl'].get('publisher') or U.urlsplit(url).hostname), 'url':url})
+        except Exception:
+            continue
+    choices.append({'name':'Search Google for the publisher', 'url':'https://www.google.com/search?'+U.urlencode({'q':record['doi']+' '+record['csl']['title']+' publisher'})})
+    return choices
+
+
 def download(payload):
     record = CACHE.get(payload.get('key'))
     if not record:
@@ -191,13 +279,17 @@ def download(payload):
     target = Path(folder)
     if not target.is_dir():
         raise ValueError('The folder does not exist. Create it first or choose an existing folder.')
-    sources = list(record['sources'])
-    mirror = str(payload.get('mirror','')).strip().rstrip('/')
-    if mirror:
-        safe_url(mirror)
-        sources.append({'name':'Sci-Hub (custom mirror)','url':mirror+'/'+U.quote(record['doi'],safe='/')})
     errors = []
-    for source in sources:
+    def candidates():
+        for provider in DATABASE_PROVIDERS:
+            try:
+                sources, discovery_errors = provider(record)
+                errors.extend(discovery_errors)
+                yield from sources
+            except Exception as e:
+                errors.append(provider.__name__ + ': ' + str(e))
+
+    for source in candidates():
         try:
             pdf, url = find_pdf(source['url'])
         except Exception as e:
@@ -217,7 +309,7 @@ def download(payload):
             except FileExistsError:
                 continue
         raise ValueError('Too many files share this name. Choose another folder.')
-    return {'ok':False,'login':record['publisher'],'attempts':errors}
+    return {'ok':False,'login':record['publisher'],'publishers':publisher_choices(record),'attempts':errors}
 
 
 class Handler(SimpleHTTPRequestHandler):

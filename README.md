@@ -12,7 +12,7 @@ Citation Workflow is a research tool for biological literature, with a dark inte
 
 - Accepts a DOI on its own, a `doi:` prefix or a full `https://doi.org/` link.
 - Searches PubMed and verifies an exact DOI match, with DOI registration metadata as a fallback.
-- Looks for PDFs through PubMed Central and the publisher, followed by an optional, user-supplied Sci-Hub mirror.
+- Tries third-party PDF databases first: PubMed Central, then automatically discovered Sci-Hub mirrors. Offers publisher links only after the database search cannot retrieve a PDF.
 - Saves verified PDFs using the original article title, replacing unsupported Windows filename characters. Duplicate downloads receive a numeric suffix rather than overwriting an existing file.
 - Generates **APA 7, Vancouver, Harvard, BibTeX and RIS** references.
 - Applies APA sentence case to article titles and title case to journal names, with editable titles and a list of proper nouns to preserve.
@@ -46,8 +46,8 @@ If your browser asks for permission to connect to the local network, allow it fo
 
 ### 3. Find and save a paper
 
-1. Enter a DOI or DOI link and select **Find paper**.
-2. On the first download, enter an existing Windows folder. You can change it later under **Folder & sources**.
+1. Select **Set download folder** above the DOI search and enter an existing Windows folder.
+2. Enter a DOI or DOI link and select **Find paper**.
 3. Review the paper details and reference. Downloads start automatically by default; turn this off in settings if you prefer to select **Download PDF** yourself.
 4. Choose a reference style, check the title’s capitalisation and select **Copy citation**.
 
@@ -63,9 +63,11 @@ Only absolute Windows drive paths are supported. The folder must already exist; 
 
 ## Full-text access
 
-The companion checks PubMed Central and the publisher’s page for PDF metadata and download links. If you enter a Sci-Hub mirror URL in settings, it is tried after those sources. No mirror is supplied or guaranteed to work.
+The companion checks PubMed Central first, then searches Google (with DuckDuckGo as a fallback) for Sci-Hub mirror candidates. If plain search pages contain no usable links, it retries in an isolated, hidden Chrome or Edge session, without using your signed-in browser profile. It tries up to three distinct HTTPS mirror domains and checks each retrieved file for a PDF header. No manual mirror setting is needed. Search results do not guarantee that a mirror is working; blocked searches, unavailable mirrors and failed retrievals appear in the source search history.
 
-If an accessible PDF cannot be retrieved, a dialogue offers a link to the publisher so you can sign in through your institution and complete the download there. The companion does not share your browser’s sign-in session or handle CAPTCHA and JavaScript challenges. Some publisher layouts will require a manual download even when full text is available.
+Database adapters are registered in `DATABASE_PROVIDERS` in `server.py`, allowing more sources to be added in order. A successful download stops the search before later adapters run. The publisher is not used as an automatic PDF source.
+
+If the databases cannot retrieve a PDF, a dialogue offers the DOI resolver, a publisher URL from the article metadata when available, and a Google search link. The DOI resolver redirects to the registered publisher. The user chooses which link to open and can sign in through their institution to complete the download there. The companion does not share your browser’s sign-in session or handle CAPTCHA and JavaScript challenges. Some publisher layouts will require a manual download even when full text is available.
 
 References can still be generated when the PDF is unavailable. Downloads are limited to 80 MB and checked for a PDF header before saving.
 
@@ -94,7 +96,7 @@ GitHub Pages hosts the static interface and cannot run the Python companion or w
 
 The companion listens only on the loopback interface. It accepts its local origin and, when started with the command above, `https://marronyao.github.io`. API requests that initiate lookups or downloads require a random session token. The local server exposes only the frontend assets, rather than arbitrary local files.
 
-Folder and mirror preferences are stored in the browser’s local storage. Folder paths are sent to the local companion for saving; the configured folder is not sent to publication metadata or full-text services. DOI queries and download requests are sent to the relevant external services.
+Folder and automatic-download preferences are stored in the browser’s local storage. Folder paths are sent to the local companion for saving; the configured folder is not sent to publication metadata or full-text services. DOI queries and download requests are sent to the relevant external services.
 
 ## Development
 

@@ -2,7 +2,7 @@
 const $ = id => document.getElementById(id);
 const API = 'http://127.0.0.1:8765';
 let token = '', record = null, busy = false, pendingDownload = false;
-let config = {folder:'', mirror:'', autoDownload:true};
+let config = {folder:'', autoDownload:true};
 try { Object.assign(config, JSON.parse(localStorage.getItem('citation-settings') || '{}')); } catch {}
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function normalizeDOI(value) {
@@ -107,14 +107,14 @@ function displayRecord() {
   if(record.pmid) link('PubMed','https://pubmed.ncbi.nlm.nih.gov/'+record.pmid+'/', $('sourceLinks'));
   record.sources.forEach(s=>link(s.name,s.url,$('sourceLinks')));
   $('pubmedStatus').textContent=record.pmid?'Paper found with an exact DOI match':'No confirmed PubMed record; using DOI metadata';
-  $('sourceStatus').textContent=record.pmc?'Search order: PMC → publisher → custom mirror':'Search order: publisher → custom mirror';
+  $('sourceStatus').textContent=record.pmc?'Search order: PMC → Sci-Hub → offer publisher':'Search order: Sci-Hub → offer publisher';
   $('downloadStatus').textContent='Ready to download'; $('attemptDetails').hidden=true;
   $('articleTitle').disabled=false;
   $('articleTitle').value=$('style').value==='apa'?sentenceCase(c.title,$('protected').value):c.title;
   renderCitation();
 }
 function showSettings() {
-  $('folder').value=config.folder; $('mirror').value=config.mirror; $('autoDownload').checked=config.autoDownload;
+  $('folder').value=config.folder; $('autoDownload').checked=config.autoDownload;
   $('settingsError').textContent=''; $('settings').showModal();
 }
 function updateFolder() { $('folderLabel').textContent=config.folder || 'No Windows folder selected'; }
@@ -123,14 +123,17 @@ async function doDownload() {
   if(!config.folder) { pendingDownload=true; showSettings(); return; }
   lock(true); $('downloadStatus').textContent='Finding full text and downloading the PDF…'; notice('Checking PDF sources in order. Some websites may take a moment to respond.');
   try {
-    const result=await api('download',{key:record.key,folder:config.folder,mirror:config.mirror});
+    const result=await api('download',{key:record.key,folder:config.folder});
     $('attempts').replaceChildren(); (result.attempts||[]).forEach(s=>{const li=document.createElement('li');li.textContent=s;$('attempts').append(li);}); $('attemptDetails').hidden=!(result.attempts?.length);
     if(result.ok) {
       $('downloadStatus').textContent=`PDF saved · ${(result.bytes/1024/1024).toFixed(2)} MB`;
       $('sourceStatus').textContent='Full text retrieved from '+result.source; notice([...record.warnings,'Saved to: '+result.path].join('\n'));
     } else {
-      $('downloadStatus').textContent='Automatic download unavailable; sign-in or manual download required'; notice('Your reference is ready, but the PDF could not be downloaded. See the source search history for details.');
-      $('loginLink').href=result.login; $('loginDialog').showModal();
+      $('downloadStatus').textContent='Database search finished; publisher options available'; notice('Your reference is ready, but the PDF could not be downloaded. See the source search history for details.');
+      $('publisherChoices').replaceChildren();
+      const choices=result.publishers?.length?result.publishers:[{name:'Open publisher',url:result.login}];
+      choices.forEach(choice=>link(choice.name,choice.url,$('publisherChoices')));
+      $('loginDialog').showModal();
     }
   } catch(e) { $('downloadStatus').textContent='Download failed'; notice(e.message,true); }
   finally {lock(false);}
@@ -155,9 +158,8 @@ $('settings').addEventListener('cancel',()=>{pendingDownload=false;});
 $('settingsForm').onsubmit=e=>{
   e.preventDefault();
   try {
-    const folder=normalizeFolder($('folder').value), mirror=$('mirror').value.trim().replace(/\/$/,'');
-    if(mirror && !/^https?:\/\/[^/]+(?:\/.*)?$/i.test(mirror)) throw Error('Enter a complete HTTP(S) mirror URL.');
-    config={folder,mirror,autoDownload:$('autoDownload').checked};
+    const folder=normalizeFolder($('folder').value);
+    config={folder,autoDownload:$('autoDownload').checked};
     try {localStorage.setItem('citation-settings',JSON.stringify(config));} catch {}
     updateFolder(); $('settings').close();
     if(pendingDownload){pendingDownload=false;doDownload();}
