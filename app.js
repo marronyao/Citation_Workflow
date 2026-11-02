@@ -54,12 +54,12 @@ async function api(route, payload) {
   let data;try {data=await response.json();}catch {throw Error('The cloud service returned an unexpected response. Please try again.');}
   if(!response.ok)throw Error(data.error||'The cloud service could not complete the request.');return data;
 }
-async function fetchPaperPDF(paper) {
+async function fetchPaperPDF(paper,onProgress) {
   const result=await api('download',{key:paper.key});
   if(!result.ok) return {result};
   const downloadURL=new URL(result.download_url);
   if(downloadURL.origin!==API || downloadURL.pathname!=='/api/pdf')throw Error('Invalid cloud download URL.');
-  const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}));
+  const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}),onProgress);
   return {result,blob};
 }
 function link(label,url,parent) {
@@ -200,6 +200,49 @@ $('copy').onclick=async()=>{
   catch {$('citationText').focus();$('citationText').select();$('copyStatus').textContent='Press Ctrl+C to copy the selected text';}
 };
 let batchItems=[], batchBusy=false;
+let batchProgressTimer=null, batchStarted=0, batchStageStarted=0;
+function updateBatchElapsed() {
+  const seconds=Math.floor((Date.now()-batchStarted)/1000);
+  $('batchElapsed').textContent=`Elapsed ${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`;
+  if(batchProgressTimer!==null && Date.now()-batchStageStarted>=15000) $('batchActivity').textContent='Still working · waiting for the current task. Some sources can be slow.';
+}
+function startBatchProgress(title,total) {
+  clearInterval(batchProgressTimer);
+  batchStarted=Date.now();batchStageStarted=batchStarted;
+  $('batchProgressPanel').hidden=false;
+  $('batchProgress').hidden=false;
+  $('batchProgressPanel').classList.add('is-active');
+  $('batchProgressTitle').textContent=title;
+  $('batchProgress').max=total;
+  setBatchProgress(0,'Starting…');
+  updateBatchElapsed();
+  batchProgressTimer=setInterval(updateBatchElapsed,1000);
+}
+function setBatchProgress(completed,message,identifier='') {
+  batchStageStarted=Date.now();
+  $('batchProgress').value=completed;
+  $('batchProgressCount').textContent=`${Math.round(completed/$('batchProgress').max*100)}% · ${completed} / ${$('batchProgress').max} steps`;
+  $('batchStatus').textContent=message;
+  $('batchCurrent').textContent=identifier;
+  $('batchActivity').textContent='Working…';
+}
+function finishBatchProgress(message,failed=false) {
+  clearInterval(batchProgressTimer);batchProgressTimer=null;
+  $('batchProgressPanel').classList.remove('is-active');
+  if(!failed) {
+    $('batchProgress').value=$('batchProgress').max;
+    $('batchProgressCount').textContent='100% · Finished';
+  }
+  $('batchStatus').textContent=message;
+  $('batchCurrent').textContent='';
+  $('batchActivity').textContent=failed?'Task failed · you can retry.':'Task finished';
+  updateBatchElapsed();
+}
+function showBatchBytes(received,total) {
+  batchStageStarted=Date.now();
+  const size=(received/1024/1024).toFixed(2)+' MB';
+  $('batchActivity').textContent=total?`${size} / ${(total/1024/1024).toFixed(2)} MB received`:`${size} received`;
+}
 function openBatch(show) {
   if(busy || batchBusy) return;
   $('singleWorkspace').hidden=show; $('batchWorkspace').hidden=!show;
@@ -211,6 +254,7 @@ $('batchOpen').onclick=()=>openBatch(true);
 $('batchBack').onclick=()=>openBatch(false);
 function batchLock(value) {
   batchBusy=value;
+  $('batchResults').setAttribute('aria-busy',String(value));
   for(const id of ['batchFind','batchStyle','batchDOIs','batchBack','batchCustomExample','settingsOpen']) $(id).disabled=value;
   refreshBatchActions();
 }
@@ -228,12 +272,17 @@ function createBatchRow(doi) {
   downloadButton.onclick=async()=>{
     if(batchBusy) return;
     batchLock(true);
-    try {await downloadBatchItem(item);} finally {
-      batchLock(false); $('batchStatus').textContent=$('batchSummary').textContent+'. Failed papers can be retried individually.';
+    startBatchProgress('Downloading PDF',1);
+    setBatchProgress(0,'Retrieving PDF…',item.doi);
+    try {
+      const file=await downloadBatchItem(item);
+      finishBatchProgress(file?'Browser download started. Check your browser downloads.':item.status.textContent,!file);
+    } finally {
+      batchLock(false);
     }
   };
   item.downloadButton=downloadButton;cells[2].append(downloadButton);
-  item.status=document.createElement('p');item.status.className='row-status';item.status.setAttribute('role','status');cells[2].append(item.status);
+  item.status=document.createElement('p');item.status.className='row-status';item.status.setAttribute('role','status');item.status.textContent='Queued';cells[2].append(item.status);
   item.links=document.createElement('div');item.links.className='row-links';cells[2].append(item.links);
   $('batchRows').append(row);return item;
 }
@@ -259,18 +308,26 @@ $('batchForm').onsubmit=async e=>{
   e.preventDefault();if(batchBusy) return;
   let dois;
   try {dois=$('batchDOIs').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);if(!dois.length) throw Error('Enter at least one DOI, one per line.');if(dois.length>20)throw Error('Use up to 20 papers per batch.');}
-  catch(e) {$('batchStatus').textContent=e.message;return;}
+  catch(e) {
+    $('batchProgressPanel').hidden=false;$('batchProgress').hidden=true;
+    $('batchProgressTitle').textContent='Check paper identifiers';
+    for(const id of ['batchProgressCount','batchCurrent','batchActivity','batchElapsed']) $(id).textContent='';
+    $('batchStatus').textContent=e.message;return;
+  }
   $('batchRows').replaceChildren();batchItems=dois.map(createBatchRow);$('batchResults').hidden=false;batchLock(true);
+  startBatchProgress('Finding papers',batchItems.length*2);
   let found=0;
   try {
     for(const [index,item] of batchItems.entries()) {
-      $('batchStatus').textContent=`Finding paper ${index+1} of ${batchItems.length}…`;
+      setBatchProgress(index*2,`Paper ${index+1} of ${batchItems.length} · Reading reference data…`,item.doi);
+      item.status.textContent='Reading reference data…';
       try {
         item.doi=normalizeDOI(item.doi);item.paper=await api('lookup',{identifier:item.doi});
         const title=item.paper.csl.title, words=title.split(/\s+/);
         item.titleCell.textContent=words.length>9?words.slice(0,9).join(' ')+'…':title;item.titleCell.title=title;
         const type=document.createElement('small');type.className='row-kind';type.textContent=item.paper.kind==='conference'?'Conference paper':item.paper.kind==='preprint'?'Preprint'+(item.paper.version?' · v'+item.paper.version:''):'Journal article';item.titleCell.append(type);
         prepareBatchCitation(item);found++;
+        setBatchProgress(index*2+1,`Paper ${index+1} of ${batchItems.length} · Searching full-text sources…`,item.doi);
         item.status.textContent='Searching full-text sources…';
         try {
           const result=await api('search',{key:item.paper.key});
@@ -281,14 +338,17 @@ $('batchForm').onsubmit=async e=>{
         } catch(error) {item.status.textContent='Full-text search failed: '+error.message;}
 
       } catch(e) {item.titleCell.textContent='Lookup failed: '+e.message;item.status.textContent='Unavailable';}
+      setBatchProgress((index+1)*2,`Processed ${index+1} of ${batchItems.length} papers · ${found} references found`);
     }
-    $('batchStatus').textContent=`Found ${found} of ${batchItems.length} papers. Choose individual PDFs or download all below.`;
+    finishBatchProgress(`Processed ${batchItems.length} papers · Found ${found} references; ${batchItems.length-found} lookups failed. Choose individual PDFs or download all below.`);
+  } catch(e) {
+    finishBatchProgress('Batch search failed: '+e.message,true);
   } finally {batchLock(false);}
 };
 async function downloadBatchItem(item, forZip=false) {
   item.status.textContent='Downloading PDF…';item.links.replaceChildren();
   try {
-    const {result,blob}=await fetchPaperPDF(item.paper);
+    const {result,blob}=await fetchPaperPDF(item.paper,showBatchBytes);
     if(blob) {
       if(!forZip){BrowserDownloads.save(blob,result.filename);item.downloaded=true;}
       item.status.textContent=forZip?'PDF ready for ZIP':'Browser download started';
@@ -303,20 +363,25 @@ $('batchDownloadAll').onclick=async()=>{
   if(batchBusy)return;
   const pending=batchItems.filter(item=>item.paper),files=[];let total=0;
   batchLock(true);
+  startBatchProgress('Preparing ZIP download',pending.length+1);
   try {
     for(const [index,item]of pending.entries()) {
-      $('batchStatus').textContent=`Preparing PDF ${index+1} of ${pending.length} for ZIP…`;
+      setBatchProgress(index,`PDF ${index+1} of ${pending.length} · Retrieving PDF for ZIP…`,item.doi);
       const file=await downloadBatchItem(item,true);
       if(file){if(total+file.blob.size>BrowserDownloads.MAX_ZIP-65536){item.status.textContent='Skipped: ZIP limit is 100 MB. Download this PDF individually.';}else{files.push(file);total+=file.blob.size;}}
     }
     const report=batchItems.map(item=>item.doi+'\n'+item.status.textContent).join('\n\n');
     if(files.length) {
-      const zip=await BrowserDownloads.zip([...files,{name:'download-report.txt',blob:new Blob([report])}]);
+      setBatchProgress(pending.length,'Creating ZIP archive…');
+      const zip=await BrowserDownloads.zip([...files,{name:'download-report.txt',blob:new Blob([report])}],(done,total)=>{
+        batchStageStarted=Date.now();
+        $('batchActivity').textContent=`Packing ${done} of ${total} files`;
+      });
       BrowserDownloads.save(zip,'Citation-Workflow-'+new Date().toISOString().slice(0,10)+'.zip');
       for(const file of files){file.item.downloaded=true;file.item.status.textContent='Included in ZIP download';}
     }
-    $('batchStatus').textContent=files.length?`ZIP download started: ${files.length} PDFs. ${batchItems.length-files.length} unavailable or skipped. Check your browser downloads.`:'No PDFs could be retrieved. See each paper for details.';
-  }catch(e){$('batchStatus').textContent=e.message;}
+    finishBatchProgress(files.length?`ZIP download started: ${files.length} PDFs. ${batchItems.length-files.length} unavailable or skipped. Check your browser downloads.`:'No PDFs could be retrieved. See each paper for details.');
+  }catch(e){finishBatchProgress('ZIP download failed: '+e.message,true);}
   finally{batchLock(false);}
 };
 function updateCustomVisibility() {

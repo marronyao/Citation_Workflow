@@ -2,7 +2,7 @@
 
 Find a paper by DOI, preprint ID or repository link, download its PDF and generate an editable citation — directly in your browser.
 
-**[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Release v0.4.0](https://github.com/marronyao/Citation_Workflow/releases/tag/v0.4.0)** · **[Feedback](https://github.com/marronyao/Citation_Workflow/issues/new?template=feedback.yml)**
+**[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Release v0.4.1](https://github.com/marronyao/Citation_Workflow/releases/tag/v0.4.1)** · **[Feedback](https://github.com/marronyao/Citation_Workflow/issues/new?template=feedback.yml)**
 
 ## Use the website
 
@@ -19,6 +19,7 @@ Your browser controls the save location and duplicate filenames. Enable its “A
 - Journal articles, preprints and individual PMLR, NeurIPS, CVF and ACL conference-paper pages. Explicit arXiv versions are preserved.
 - Verified PDF retrieval from original repositories, PMC and supported open-access publishers. Source history and official access links explain failed downloads.
 - APA 7, Vancouver, Harvard, BibTeX, RIS / EndNote, and a custom format inferred from a reference example. Editable references, titles and APA proper nouns.
+- Live batch progress with the current identifier, lookup/retrieval stage, elapsed time, PDF transfer size and ZIP packing status.
 - PDFs named after the article title; ZIP downloads with a report. Invalid or unavailable papers do not stop other items.
 - One public GitHub feedback form: download/citation problem, paper DOI or description, optional contact email. Contact emails are visible publicly.
 

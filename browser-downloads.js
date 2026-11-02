@@ -1,11 +1,12 @@
 /* Small, dependency-free browser downloads and UTF-8 ZIP (store method). */
 (function(root){
   const MAX_PDF=80*1024*1024,MAX_ZIP=100*1024*1024;
-  async function readPDF(response) {
+  async function readPDF(response,onProgress=()=>{}) {
     if(!response.ok){let message='PDF download failed (HTTP '+response.status+').';try{message=(await response.json()).error||message;}catch{}throw Error(message);}
     if(+response.headers.get('content-length')>MAX_PDF)throw Error('PDF exceeds 80 MB.');
+    const length=+response.headers.get('content-length'),total=length>0&&!response.headers.get('content-encoding')?length:null;
     const reader=response.body.getReader(),chunks=[];let size=0;
-    try {while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>MAX_PDF)throw Error('PDF exceeds 80 MB.');chunks.push(value);}}
+    try {onProgress(0,total);while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>MAX_PDF)throw Error('PDF exceeds 80 MB.');chunks.push(value);onProgress(size,total);}}
     catch(e){await reader.cancel();throw e;}
     const blob=new Blob(chunks,{type:'application/pdf'});
     if(await blob.slice(0,5).text()!=='%PDF-')throw Error('The source did not return a PDF.');
@@ -16,11 +17,14 @@
   }
   function crc32(bytes) {let crc=0xffffffff;for(const b of bytes){crc^=b;for(let i=0;i<8;i++)crc=(crc>>>1)^((crc&1)?0xedb88320:0);}return (crc^0xffffffff)>>>0;}
   function header(size,fields) {const bytes=new Uint8Array(size),v=new DataView(bytes.buffer);for(const [at,n,length] of fields)length===2?v.setUint16(at,n,true):v.setUint32(at,n,true);return bytes;}
-  async function zip(files) {
+  async function zip(files,onProgress=()=>{}) {
     if(!files.length)throw Error('No files to download.');
     if(files.reduce((n,f)=>n+f.blob.size,0)>MAX_ZIP)throw Error('Batch exceeds 100 MB. Download fewer papers together.');
     const parts=[],directory=[],names=new Set();let offset=0;
-    for(const f of files){
+    for(const [index,f] of files.entries()){
+      onProgress(index,files.length);
+      // Let the browser paint progress before reading and checksumming each file.
+      await new Promise(resolve=>setTimeout(resolve,0));
       let name=f.name.replace(/[\\/\x00-\x1f]/g,'_'),counter=1;const base=name;
       while(names.has(name))name=base.replace(/(\.[^.]*)?$/,(_,ext)=>' ('+(++counter)+')'+(ext||''));names.add(name);
       const n=new TextEncoder().encode(name),bytes=new Uint8Array(await f.blob.arrayBuffer()),crc=crc32(bytes),size=bytes.length;
@@ -29,7 +33,9 @@
       parts.push(local,n,f.blob);directory.push(central,n);offset+=local.length+n.length+size;
     }
     const dirSize=directory.reduce((n,b)=>n+b.length,0),end=header(22,[[0,0x06054b50],[8,files.length,2],[10,files.length,2],[12,dirSize],[16,offset]]);
-    return new Blob([...parts,...directory,end],{type:'application/zip'});
+    const archive=new Blob([...parts,...directory,end],{type:'application/zip'});
+    onProgress(files.length,files.length);
+    return archive;
   }
   const api={readPDF,save,zip,MAX_ZIP};if(typeof module!=='undefined')module.exports=api;else root.BrowserDownloads=api;
 })(globalThis);
