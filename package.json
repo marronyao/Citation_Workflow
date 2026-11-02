@@ -1,6 +1,6 @@
 {
   "name": "citation-workflow",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Windows DOI to PubMed PDF and citation workflow",
   "main": "index.js",
   "scripts": {

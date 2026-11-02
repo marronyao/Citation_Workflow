@@ -113,7 +113,7 @@ def fetch(url, accept='*/*', limit=8_000_000):
         with NCBI_LOCK:
             time.sleep(max(0, .36 - (time.monotonic() - LAST_NCBI)))
             LAST_NCBI = time.monotonic()
-    req = R.Request(url, headers={'User-Agent': 'CitationWorkflow/0.1 (local research tool)', 'Accept': accept})
+    req = R.Request(url, headers={'User-Agent': 'CitationWorkflow/0.2 (local research tool)', 'Accept': accept})
     with R.build_opener(Redirect()).open(req, timeout=25) as res:
         data = res.read(limit + 1)
         if len(data) > limit:
