@@ -6,12 +6,20 @@ Find a paper by DOI, preprint ID or repository link, download its PDF and genera
 
 ## Use the website
 
-1. Open the website. No local helper, Python, extension, repository download or installation is required.
+1. Open the website. Standard cloud downloads need no local helper, Python, extension, repository download or installation.
 2. Enter a DOI, arXiv ID (including an explicit version), or supported preprint/conference paper link, and select **Find paper**.
 3. Review the paper and citation. Select **Download PDF** for a standard browser download.
 4. For several papers, select **Batch download**, enter one identifier per line, and select **Find papers**. Download individually or choose **Download all as ZIP**.
 
 Your browser controls the save location and duplicate filenames. Enable its “Ask where to save each file” option to choose a folder for each download. The website cannot write directly to an arbitrary folder. Optional automatic download in Download settings is off by default; browsers may require an extra click or permission.
+
+### Optional browser connector
+
+For sources that require browser verification or sign-in, the optional **Citation Workflow Connector** runs in desktop Chrome/Edge. Use **Connector setup** on the website to download its ZIP, extract it, enable Developer mode at `chrome://extensions` or `edge://extensions`, choose **Load unpacked**, and select the extracted folder. Reload the app and confirm **Connector connected**. It is an unpacked extension, not a Chrome Web Store listing.
+
+Choose **Verify & continue** for a source to open a new tab. Complete the site's verification or sign-in yourself, keep the tab on the requested paper and open its PDF if necessary. The connector attempts retrieval using that browser session and returns PDF bytes directly to the app. A waiting batch ZIP resumes after receiving the PDF. **Skip paper & continue** moves to the next item; cancel, tab closure and a 15-minute waiting limit are supported. Received PDFs are reused in the current page's ZIP downloads, within a 100 MB in-memory cache. Reloading the page discards this cache.
+
+No login cookies or PDF bytes are uploaded to Cloudflare. The extension has an explicit source-host list and scripting permission; it cannot guarantee that a source allows extension downloads after verification. Standard cloud downloads remain available without installation. See [connector installation and limitations](extension/README.md).
 
 ## Features and limits
 

@@ -12,6 +12,16 @@ Regression coverage includes DOI/title matching, conflicting DOI rejection, chal
 
 No Release is created by an ordinary push. Publishing a Release requires a manual Pages workflow run with `publish_release` explicitly enabled.
 
+## Optional browser verification connector
+
+The optional unpacked Chrome/Edge extension in `extension/` supplies browser-session retrieval when cloud requests are restricted. The user chooses a source in the app; the connector opens a visible tab, waits while the user completes verification/sign-in, checks the paper identity on readable HTML, and attempts approved PDF links using browser-session credentials. A PDF opened directly in the user-controlled source tab can also be retrieved. This is not an automated CAPTCHA solver. No cookie values are read or uploaded.
+
+Only the exact Citation Workflow origin/path may initiate a connector job. The extension uses a fixed host allowlist, validates each inspected HTTP redirect, caps PDFs at 80 MB and streams ordered chunks to the originating app page. The page checks transfer length and PDF signature, and keeps at most 100 MB of connector PDFs in memory. A pending ZIP waits for the connector result; the user can skip a paper and let the rest continue. Cancellation, a closed source tab, disconnection and a 15-minute wait limit end the job. The source tab is left open after success.
+
+Some sources still reject extension requests or use unsupported redirects/CDNs. Browser verification does not make the cloud session verified. Successful connector PDFs are obtained within the browser and do not pass through the Worker. Installation remains optional and is currently manual via Developer mode; no store publication or GitHub Release is implied.
+
+Validation uses an actual unpacked extension in an isolated desktop Edge profile with controlled HTTPS source responses. The source fixture requires a SameSite=Lax session cookie set after a simulated human verification step; a same-origin PDF request from the source tab includes it and succeeds. Tests cover single-paper download, a paused two-paper ZIP resuming after verification, tab closure, skipping to the remaining paper, mobile-sized setup layout and a clean app console. Python independently checks the resulting ZIP's CRCs and both PDF signatures. These are controlled verification fixtures, not completed live third-party CAPTCHAs. Real publisher/source verification and native Chrome/mobile-device installation remain outside this validation.
+
 ## Elsevier redirect fix
 
 For `10.1016/j.cell.2012.11.001`, a live audit on 2 November 2026 found:

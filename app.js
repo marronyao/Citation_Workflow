@@ -54,9 +54,21 @@ async function api(route, payload) {
   let data;try {data=await response.json();}catch {throw Error('The cloud service returned an unexpected response. Please try again.');}
   if(!response.ok)throw Error(data.error||'The cloud service could not complete the request.');return data;
 }
-async function fetchPaperPDF(paper,onProgress) {
+const browserPDFs=new Map();let activeRecovery=null;
+function browserPDFKey(paper){return (paper.doi||paper.identifier).toLowerCase();}
+function rememberBrowserPDF(paper,blob){
+  const key=browserPDFKey(paper);browserPDFs.delete(key);
+  while([...browserPDFs.values()].reduce((n,value)=>n+value.blob.size,blob.size)>100*1024*1024&&browserPDFs.size)browserPDFs.delete(browserPDFs.keys().next().value);
+  const result={ok:true,source:'Browser connector',filename:String(paper.csl.title||'Paper').replace(/[<>:"/\\|?*\x00-\x1f]/g,' ').trim().slice(0,140).replace(/[. ]+$/,'')+'.pdf'};
+  const file={result,blob};browserPDFs.set(key,file);return file;
+}
+async function fetchPaperPDF(paper,onProgress,interactive=false) {
+  const recovered=browserPDFs.get(browserPDFKey(paper));if(recovered)return recovered;
   const result=await api('download',{key:paper.key});
-  if(!result.ok) return {result};
+  if(!result.ok) {
+    if(interactive&&globalThis.CitationConnector?.available)return new Promise(resolve=>offerPublishers(result,{paper,resolve,onProgress}));
+    return {result};
+  }
   const downloadURL=new URL(result.download_url);
   if(downloadURL.origin!==API || downloadURL.pathname!=='/api/pdf')throw Error('Invalid cloud download URL.');
   const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}),onProgress);
@@ -139,13 +151,13 @@ async function doDownload() {
   if(!record || busy)return;
   lock(true);$('downloadStatus').textContent='Downloading PDF from the cloud…';notice('Preparing your browser download…');
   try {
-    const {result,blob}=await fetchPaperPDF(record);showAttempts(result);
+    const {result,blob}=await fetchPaperPDF(record,null,true);showAttempts(result);
     if(blob) {
       BrowserDownloads.save(blob,result.filename);
       $('downloadStatus').textContent=`Download started · ${(blob.size/1024/1024).toFixed(2)} MB`;
       $('sourceStatus').textContent='Full text retrieved from '+result.source+(result.version_note?' · '+result.version_note:'');
       notice([...record.warnings,'Your browser controls the save location. Check its downloads list.'].join('\n'));
-    } else {$('downloadStatus').textContent='No accessible PDF retrieved';notice('Your reference is ready. Open the official article for other access options.');offerPublishers(result);}
+    } else {$('downloadStatus').textContent='No accessible PDF retrieved';notice('Your reference is ready. Open an article source for other access options.');if(!result.browserHandled)offerPublishers(result);}
   }catch(e){$('downloadStatus').textContent='Download failed';notice(e.message,true);}
   finally {lock(false);}
 }
@@ -154,10 +166,47 @@ function showAttempts(result) {
   (result.attempts||[]).forEach(message=>{const li=document.createElement('li');li.textContent=message;$('attempts').append(li);});
   $('attemptDetails').hidden=!(result.attempts?.length);
 }
-function offerPublishers(result) {
+function closeRecovery(){
+  const recovery=activeRecovery;activeRecovery=null;recovery?.cancel?.();
+  recovery?.resolve?.({result:{...recovery.result,browserHandled:true}});
+  $('connectorCancel').hidden=true;$('loginDialog').close();
+}
+function offerPublishers(result,options={}) {
+  if(activeRecovery&&activeRecovery!==options)closeRecovery();
+  const recovery={result,paper:options.paper||record,...options};activeRecovery=recovery;
+  $('loginClose').textContent=recovery.resolve?'Skip paper & continue':'Stay here';
   $('publisherChoices').replaceChildren();
-  (result.publishers?.length?result.publishers:[{name:'Open official article',url:result.login}]).forEach(choice=>link(choice.name,choice.url,$('publisherChoices')));
+  $('connectorRecoveryStatus').textContent=globalThis.CitationConnector?.available?'Connector ready. Choose Verify & continue to open a source tab.':'Optional connector not detected. Open Connector setup to enable verification and automatic continuation.';
+  $('connectorCancel').hidden=true;
+  const choices=result.verification_requests?.length?result.verification_requests.map(v=>({name:v.source,url:v.url})):result.publishers?.length?result.publishers:[{name:'Open official article',url:result.login}];
+  for(const choice of choices){
+    const group=document.createElement('div');group.className='source-choice';link(choice.name,choice.url,group);
+    if(globalThis.CitationConnector?.available&&recovery.paper){
+      const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent='Verify & continue';
+      button.onclick=async()=>{
+        for(const b of $('publisherChoices').querySelectorAll('button'))b.disabled=true;
+        $('connectorCancel').hidden=false;
+        const job=CitationConnector.download({url:choice.url,paper:recovery.paper,onProgress:options.onProgress||(()=>{}),onStatus:message=>{
+          $('connectorRecoveryStatus').textContent=message;
+          if(batchBusy){batchStageStarted=Date.now();$('batchActivity').textContent='Waiting for browser verification…';}
+        }});recovery.cancel=job.cancel;
+        try{
+          const blob=await job.promise;if(activeRecovery!==recovery)return;
+          const file=rememberBrowserPDF(recovery.paper,blob);activeRecovery=null;$('loginDialog').close();
+          if(recovery.resolve)recovery.resolve(file);
+          else {BrowserDownloads.save(blob,file.result.filename);recovery.onComplete?.();if(recovery.paper===record){$('downloadStatus').textContent='Browser download started · verified in your browser';$('sourceStatus').textContent='Full text retrieved with the browser connector';}}
+        }catch(error){if(activeRecovery===recovery)$('connectorRecoveryStatus').textContent=error.message;}
+        finally{if(activeRecovery===recovery){recovery.cancel=null;$('connectorCancel').hidden=true;for(const b of $('publisherChoices').querySelectorAll('button'))b.disabled=false;}}
+      };group.append(button);
+    }
+    $('publisherChoices').append(group);
+  }
   if(!$('loginDialog').open) $('loginDialog').showModal();
+}
+function addBrowserRecovery(item,result){
+  if(!globalThis.CitationConnector?.available)return;
+  const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent='Verify & continue';
+  button.onclick=()=>{if(!batchBusy)offerPublishers(result,{paper:item.paper,onComplete:()=>{item.downloaded=true;item.status.textContent='Browser download started · verified in your browser';refreshBatchActions();}});};item.links.append(button);
 }
 $('lookupForm').addEventListener('submit',async e=>{
   e.preventDefault();if(busy)return;let available=false;
@@ -185,7 +234,14 @@ $('settingsForm').onsubmit=e=>{
   try {localStorage.setItem('citation-cloud-settings',JSON.stringify(config));}catch{}
   $('settings').close();
 };
-$('loginClose').onclick=()=>$('loginDialog').close();
+$('loginClose').onclick=closeRecovery;
+$('connectorCancel').onclick=()=>activeRecovery?.cancel?.();
+$('loginDialog').addEventListener('cancel',event=>{event.preventDefault();closeRecovery();});
+$('connectorHelpOpen').onclick=()=>$('connectorHelp').showModal();
+$('batchConnectorHelp').onclick=()=>$('connectorHelp').showModal();
+$('connectorHelpClose').onclick=()=>$('connectorHelp').close();
+$('connectorHelpFromSources').onclick=()=>$('connectorHelp').showModal();
+window.addEventListener('citation-connector-ready',()=>{$('connectorState').textContent='Connector connected';if(activeRecovery&&!activeRecovery.cancel)offerPublishers(activeRecovery.result,activeRecovery);});
 $('articleTitle').addEventListener('input',renderCitation);
 $('style').onchange=()=>{
   updateCustomVisibility();
@@ -332,7 +388,7 @@ $('batchForm').onsubmit=async e=>{
         try {
           const result=await api('search',{key:item.paper.key});
           item.status.textContent=result.ok?'PDF found · '+result.source+(result.version_note?' · '+result.version_note:''):'No PDF retrieved; official article options below';
-          if(!result.ok)(result.publishers||[]).forEach(choice=>link(choice.name,choice.url,item.links));
+          if(!result.ok){(result.publishers||[]).forEach(choice=>link(choice.name,choice.url,item.links));if(globalThis.CitationConnector?.available)addBrowserRecovery(item,result);}
           const details=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('ul');summary.textContent='Source search history';details.append(summary,list);
           (result.attempts||[]).forEach(message=>{const li=document.createElement('li');li.textContent=message;list.append(li);});item.pdfCell.append(details);
         } catch(error) {item.status.textContent='Full-text search failed: '+error.message;}
@@ -348,7 +404,7 @@ $('batchForm').onsubmit=async e=>{
 async function downloadBatchItem(item, forZip=false) {
   item.status.textContent='Downloading PDF…';item.links.replaceChildren();
   try {
-    const {result,blob}=await fetchPaperPDF(item.paper,showBatchBytes);
+    const {result,blob}=await fetchPaperPDF(item.paper,showBatchBytes,true);
     if(blob) {
       if(!forZip){BrowserDownloads.save(blob,result.filename);item.downloaded=true;}
       item.status.textContent=forZip?'PDF ready for ZIP':'Browser download started';
@@ -356,6 +412,7 @@ async function downloadBatchItem(item, forZip=false) {
     }
     item.status.textContent='PDF unavailable. Open the official article or retry.';
     (result.publishers||[]).forEach(choice=>link(choice.name,choice.url,item.links));
+    if(globalThis.CitationConnector?.available)addBrowserRecovery(item,result);
   }catch(e){item.status.textContent='Download failed: '+e.message;}
   return null;
 }

@@ -67,13 +67,13 @@ export async function searchThirdParty(paper,io) {
           const response=await io.upstream(candidate.url,{signal,headers:{Accept:'text/html'}});
           const parsed=parseSourcePage(await io.boundedText(response),response.url||candidate.url,paper,candidate.matched);
           source.status=parsed.status;
-          if(parsed.status==='verification_required'||parsed.status==='login_required') {source.attempts.push(new URL(candidate.url).hostname+': '+(parsed.status==='verification_required'?'manual browser verification required.':'sign-in required.'));break;}
+          if(parsed.status==='verification_required'||parsed.status==='login_required') {source.verification_url=candidate.url;source.attempts.push(new URL(candidate.url).hostname+': '+(parsed.status==='verification_required'?'manual browser verification required.':'sign-in required.'));break;}
           if(parsed.status==='no_match')source.attempts.push(new URL(candidate.url).hostname+': no matching downloadable record found.');
           for(const link of parsed.links) {
             try{io.safeURL(link.url);queue.push(link);}
             catch(error){source.attempts.push(error.message);}
           }
-        }catch(error){source.status=sourceError(error);source.attempts.push(new URL(candidate.url).hostname+': '+(error.message||String(error)));}
+        }catch(error){source.status=sourceError(error);if(['login_required','access_restricted'].includes(source.status)&&!source.verification_url)source.verification_url=candidate.url;source.attempts.push(new URL(candidate.url).hostname+': '+(error.message||String(error)));}
       }
       if(source.status==='candidates')source.status='unavailable';
     }

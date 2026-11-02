@@ -64,6 +64,7 @@ test('verification pages, connected source attempts and unconnected sources are 
   const {data}=await retrievalFixture(()=>new Response('<title>Just a moment</title><p>Verify you are human</p>'));
   assert.equal(data.ok,false);
   assert(data.attempts.some(s=>s.includes('verification page')));
+  assert(data.verification_requests.some(v=>v.source==='Official article'&&v.url.startsWith('https://doi.org/')));
   assert(data.attempts.some(s=>s.startsWith('Not searched: ResearchGate')));
   assert.deepEqual(data.source_results.map(s=>s.name),['Sci-Hub','Z-Library','Library Genesis']);
   assert(data.attempts.some(s=>s.startsWith('Sci-Hub:')));

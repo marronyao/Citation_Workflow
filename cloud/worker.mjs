@@ -1,6 +1,6 @@
 /* Citation Workflow cloud API. No local helper or user filesystem access. */
 import {THIRD_PARTY_HOSTS,THIRD_PARTY_NAMES,searchThirdParty} from './third-party.mjs';
-const VERSION='0.4.1-2', MAX_PDF=80*1024*1024;
+const VERSION='0.4.1-connector1', MAX_PDF=80*1024*1024;
 const REPOSITORIES=['arxiv.org','export.arxiv.org','proceedings.mlr.press','proceedings.neurips.cc','openaccess.thecvf.com','aclanthology.org','biorxiv.org','www.biorxiv.org','medrxiv.org','www.medrxiv.org','chemrxiv.org','www.chemrxiv.org'];
 const HOSTS=[...REPOSITORIES,'api.crossref.org','api.datacite.org','doi.org','api.biorxiv.org','pmc.ncbi.nlm.nih.gov','www.ncbi.nlm.nih.gov','pmc-oa-opendata.s3.amazonaws.com','journals.plos.org','www.jstatsoft.org','jstatsoft.org','www.nature.com','nature.com','www.science.org','science.org','elifesciences.org','www.elifesciences.org','peerj.com','www.frontiersin.org','www.mdpi.com','link.springer.com','link.springer.com','academic.oup.com','onlinelibrary.wiley.com','www.cell.com','www.sciencedirect.com','pubs.acs.org','pubs.rsc.org'];
 const enc=new TextEncoder();
@@ -144,7 +144,7 @@ async function pmcCandidates(doi) {
 }
 async function searchPaper(paper,ctx) {
   return cached('search:'+paper.identifier,ctx,async()=>{
-    const attempts=[],candidates=[...paper.pdf_candidates];
+    const attempts=[],verification=[],candidates=[...paper.pdf_candidates];
     if(paper.kind==='journal'&&paper.doi)try{const pmc=await pmcCandidates(paper.doi);candidates.unshift(...pmc);if(!pmc.length)attempts.push('PMC: no matching downloadable PDF was found.');}catch(e){attempts.push('PMC: '+e.message);}
     // Deterministic open-access publisher URLs, tied to the exact requested DOI.
     if(/^10\.1371\//i.test(paper.doi))candidates.push({url:'https://journals.plos.org/'+(paper.doi.split('/')[1].split('.')[1]==='pbio'?'plosbiology':'plosone')+'/article/file?id='+encodeURIComponent(paper.doi)+'&type=printable',name:'PLOS'});
@@ -156,7 +156,7 @@ async function searchPaper(paper,ctx) {
       for(const candidate of list.slice(0,8)) {
         if(seen.has(candidate.url))continue;seen.add(candidate.url);
         try {const pdf=await pdfResponse(candidate.url);await pdf.body.cancel();attempts.push(candidate.name+': PDF verified');return {ok:true,...candidate,source:candidate.name,attempts,publishers:paper.sources};}
-        catch(e){attempts.push(candidate.name+': '+e.message);}
+        catch(e){attempts.push(candidate.name+': '+e.message);if(/HTTP (?:401|403)|verification page/.test(e.message))verification.push({source:candidate.name,url:paper.publisher,reason:'access_restricted'});}
       }
     }
     const found=await tryCandidates(candidates);if(found)return found;
@@ -164,12 +164,14 @@ async function searchPaper(paper,ctx) {
       const candidate=await publisherPage('https://doi.org/'+paper.doi);
       if(candidate){const found=await tryCandidates([candidate]);if(found)return found;}
       else attempts.push('Official article: no PDF link was exposed on the publisher page.');
-    }catch(e){attempts.push('Official article: '+e.message);}
+    }catch(e){attempts.push('Official article: '+e.message);if(/HTTP (?:401|403)|verification page/.test(e.message))verification.push({source:'Official article',url:paper.publisher,reason:'access_restricted'});}
     const thirdParty=await searchThirdParty(paper,{safeURL,upstream,boundedText,pdfResponse});
     attempts.push(...thirdParty.attempts);
     if(thirdParty.ok)return {...thirdParty,attempts,publishers:paper.sources};
     attempts.push('Not searched: '+UNCONFIGURED_SOURCES.join(', ')+'. These sources are not connected to this cloud service.');
-    attempts.push('No accessible PDF was verified. Some sources require sign-in or manual verification.');return {ok:false,attempts,source_results:thirdParty.sources,publishers:[...paper.sources,...thirdParty.publishers],login:paper.publisher};
+    verification.push(...thirdParty.sources.filter(s=>s.verification_url).map(s=>({source:s.name,url:s.verification_url,reason:s.status})));
+    const verification_requests=[...new Map(verification.map(v=>[v.url,v])).values()];
+    attempts.push('No accessible PDF was verified. Some sources require sign-in or manual verification.');return {ok:false,attempts,source_results:thirdParty.sources,verification_requests,publishers:[...paper.sources,...thirdParty.publishers],login:paper.publisher};
   },300);
 }
 export default {async fetch(request,env,ctx) {

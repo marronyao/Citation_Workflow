@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "Citation Workflow Connector",
+  "version": "0.1.0",
+  "description": "Optional browser-session PDF retrieval after you complete source verification.",
+  "permissions": ["scripting"],
+  "host_permissions": [
+    "https://doi.org/*", "https://linkinghub.elsevier.com/*", "https://cell.com/*", "https://www.cell.com/*", "https://www.sciencedirect.com/*",
+    "https://www.nature.com/*", "https://nature.com/*", "https://www.science.org/*", "https://science.org/*", "https://link.springer.com/*",
+    "https://academic.oup.com/*", "https://onlinelibrary.wiley.com/*", "https://pubs.acs.org/*", "https://pubs.rsc.org/*",
+    "https://pmc.ncbi.nlm.nih.gov/*", "https://www.ncbi.nlm.nih.gov/*", "https://pmc-oa-opendata.s3.amazonaws.com/*",
+    "https://journals.plos.org/*", "https://www.jstatsoft.org/*", "https://jstatsoft.org/*", "https://elifesciences.org/*", "https://www.elifesciences.org/*",
+    "https://peerj.com/*", "https://www.frontiersin.org/*", "https://www.mdpi.com/*", "https://arxiv.org/*", "https://export.arxiv.org/*",
+    "https://proceedings.mlr.press/*", "https://proceedings.neurips.cc/*", "https://openaccess.thecvf.com/*", "https://aclanthology.org/*",
+    "https://biorxiv.org/*", "https://www.biorxiv.org/*", "https://medrxiv.org/*", "https://www.medrxiv.org/*", "https://chemrxiv.org/*", "https://www.chemrxiv.org/*",
+    "https://sci-hub.ru/*", "https://sci-hub.st/*", "https://sci-hub.se/*", "https://z-library.sk/*", "https://z-library.im/*", "https://libgen.li/*", "https://libgen.gs/*"
+  ],
+  "background": {"service_worker": "background.js"},
+  "content_scripts": [{"matches": ["https://marronyao.github.io/Citation_Workflow/*"], "js": ["bridge.js"], "run_at": "document_start"}],
+  "action": {"default_title": "Citation Workflow Connector · use the website's Verify & continue button"}
+}
