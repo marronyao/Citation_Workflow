@@ -1,0 +1,29 @@
+name: Paper feedback
+description: Report a paper download or citation problem.
+title: "[Feedback] Paper problem"
+body:
+  - type: dropdown
+    id: problem_type
+    attributes:
+      label: Problem type
+      options:
+        - Paper download
+        - Paper citation
+    validations:
+      required: true
+  - type: textarea
+    id: paper_problem
+    attributes:
+      label: Paper DOI / problem
+      description: Enter the paper DOI. The DOI alone is enough to report a download problem. For citation problems, you can also describe what is wrong.
+      placeholder: 10.1038/s41586-021-03819-2
+    validations:
+      required: true
+  - type: input
+    id: contact_email
+    attributes:
+      label: Contact email (optional)
+      description: Leave an email address if you would like a reply. This address will be visible in the public issue.
+      placeholder: name@example.com
+    validations:
+      required: false

@@ -1,6 +1,6 @@
 {
   "name": "citation-workflow",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Cross-platform scholarly full-text search, PDF download and citation workflow",
   "main": "index.js",
   "scripts": {

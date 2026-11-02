@@ -78,7 +78,7 @@ Windows requires an absolute drive path; UNC network paths are not currently sup
 
 ## Feedback
 
-Select **Feedback** next to **Batch download** on the homepage, or in the top-right corner in batch mode, to open [GitHub Issues](https://github.com/marronyao/Citation_Workflow/issues/new/choose). Choose a bug report or suggestion template. A GitHub account is required to submit; issues are public. The link opens GitHub without submitting anything automatically.
+Select **Feedback** next to **Batch download** on the homepage, or in the top-right corner in batch mode, to open the [paper feedback form](https://github.com/marronyao/Citation_Workflow/issues/new?template=feedback.yml). Choose **Paper download** or **Paper citation**, then provide the paper DOI or describe the citation problem. A DOI alone is enough for download reports. A contact email is optional; anything entered, including an email address, is visible in the public issue. A GitHub account is required to submit. The link opens the form without submitting anything automatically.
 
 Twikoo is also compatible with static frontends, but its comments need a separately hosted backend. This project currently uses GitHub Issues, so no extra comment service or database is needed.
 
