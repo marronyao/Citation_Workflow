@@ -8,6 +8,33 @@ import subprocess
 
 
 class CoreTests(unittest.TestCase):
+    def test_example_doi_is_extracted_without_trailing_punctuation(self):
+        example='Smith A. A complete journal reference. Journal 2026;1:2. https://doi.org/10.1234/example.'
+        with patch.object(server,'lookup',return_value={'csl':{}}) as lookup:
+            server.reference_example({'example':example})
+        lookup.assert_called_once_with('10.1234/example')
+
+    def test_example_without_doi_requires_unique_title_match(self):
+        example='Smith A. A distinctive title about neuronal repair. Journal 2026;1:2.'
+        found={'message':{'items':[{'DOI':'10.1234/example','title':['A distinctive title about neuronal repair']}, {'DOI':'10.1234/other','title':['An unrelated paper']}]}}
+        with patch.object(server,'getjson',return_value=found), patch.object(server,'lookup',return_value={}) as lookup:
+            server.reference_example({'example':example})
+        lookup.assert_called_once_with('10.1234/example')
+        found['message']['items'].append({'DOI':'10.1234/ambiguous','title':['A distinctive title about neuronal repair']})
+        with patch.object(server,'getjson',return_value=found), patch.object(server,'lookup') as lookup:
+            with self.assertRaisesRegex(ValueError,'reliably'):
+                server.reference_example({'example':example})
+            lookup.assert_not_called()
+
+    def test_crossref_abbreviation_fallback(self):
+        def getjson(url):
+            if 'esearch.fcgi' in url:
+                return {'esearchresult':{'idlist':[]}}
+            return {'message':{'short-container-title':['Nat Neurosci']}}
+        with patch.object(server,'getjson',side_effect=getjson), patch.object(server,'fetch',return_value=(b'{"title":"Target","container-title":"Nature Neuroscience"}', '', 'application/json')):
+            result=server.lookup('10.1234/abbreviation')
+        self.assertEqual(result['csl']['container-title-short'],'Nat Neurosci')
+
     def test_folder_picker_selects_existing_folder_and_cancellation(self):
         selected = subprocess.CompletedProcess([], 0, json.dumps({'folder':'D:/Research papers'}))
         cancelled = subprocess.CompletedProcess([], 0, '{"folder":""}')
@@ -45,13 +72,14 @@ class CoreTests(unittest.TestCase):
         self.assertLessEqual(len(server.filename('x'*400)),164)
 
     def test_reference_doi_does_not_override_paper(self):
-        xml=b'''<PubmedArticleSet><PubmedArticle><MedlineCitation><Article><ArticleTitle>Target paper</ArticleTitle><Journal><Title>Test journal</Title></Journal></Article></MedlineCitation><PubmedData><ArticleIdList><ArticleId IdType="doi">10.1234/target</ArticleId><ArticleId IdType="pubmed">123</ArticleId><ArticleId IdType="pmc">PMC123</ArticleId></ArticleIdList><ReferenceList><Reference><ArticleIdList><ArticleId IdType="doi">10.9999/reference</ArticleId><ArticleId IdType="pubmed">999</ArticleId></ArticleIdList></Reference></ReferenceList></PubmedData></PubmedArticle></PubmedArticleSet>'''
+        xml=b'''<PubmedArticleSet><PubmedArticle><MedlineCitation><Article><ArticleTitle>Target paper</ArticleTitle><Journal><Title>Test journal</Title><ISOAbbreviation>Test J</ISOAbbreviation></Journal></Article></MedlineCitation><PubmedData><ArticleIdList><ArticleId IdType="doi">10.1234/target</ArticleId><ArticleId IdType="pubmed">123</ArticleId><ArticleId IdType="pmc">PMC123</ArticleId></ArticleIdList><ReferenceList><Reference><ArticleIdList><ArticleId IdType="doi">10.9999/reference</ArticleId><ArticleId IdType="pubmed">999</ArticleId></ArticleIdList></Reference></ReferenceList></PubmedData></PubmedArticle></PubmedArticleSet>'''
         def fake_fetch(url,*args,**kwargs):
             if 'efetch' in url: return xml,url,'text/xml'
             return json.dumps({'type':'article-journal','title':'Target paper'}).encode(),url,'application/json'
         with patch.object(server,'getjson',return_value={'esearchresult':{'idlist':['123']}}),patch.object(server,'fetch',side_effect=fake_fetch):
             result=server.lookup('10.1234/target')
         self.assertEqual(result['pmid'],'123');self.assertEqual(result['pmc'],'PMC123')
+        self.assertEqual(result['csl']['container-title-short'],'Test J')
 
     def test_login_html_is_not_saved_as_pdf(self):
         with patch.object(server,'fetch',return_value=(b'<html>Login</html>','https://example.org','text/html')):

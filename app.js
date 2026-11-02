@@ -64,15 +64,13 @@ function link(label,url,parent) {
   if (!/^https?:\/\//i.test(url)) return;
   const a=document.createElement('a'); a.textContent=label+' ↗'; a.href=url; a.target='_blank'; a.rel='noopener noreferrer'; parent.append(a);
 }
-function cleanPreview(markup) {
-  const doc=new DOMParser().parseFromString(markup,'text/html');
-  for(const element of [...doc.body.querySelectorAll('*')]) {
-    if (!['DIV','SPAN','I','EM','B','STRONG','SUP','SUB','A'].includes(element.tagName)) { element.replaceWith(document.createTextNode(element.textContent)); continue; }
-    for (const attr of [...element.attributes]) if (attr.name!=='class') element.removeAttribute(attr.name);
-  }
-  return doc.body.innerHTML;
+let customDefinition=null, customRevision=0, customTimer;
+function initialTitle(title, style) {
+  if(style==='custom' && customDefinition?.titleCase==='title') return journalCase(title);
+  return style==='apa' || (style==='custom' && customDefinition?.titleCase==='sentence')?sentenceCase(title,$('protected').value):title;
 }
 function formatReference(paper, style, title) {
+  if(style==='custom') return CustomStyle.format(paper,customDefinition,title ?? initialTitle(paper.csl.title,style));
   const csl=structuredClone(paper.csl);
   csl.title=(title ?? (style==='apa'?sentenceCase(csl.title):csl.title)).replace(/\.$/,'');
   if(style==='apa') csl['container-title']=journalCase(csl['container-title']||'');
@@ -80,22 +78,21 @@ function formatReference(paper, style, title) {
     const lines=['TY  - JOUR','TI  - '+csl.title];
     (csl.author||[]).forEach(a=>lines.push('AU  - '+(a.literal || [a.family,a.given].filter(Boolean).join(', '))));
     for(const [tag,value] of [['JO',csl['container-title']],['PY',csl.issued?.['date-parts']?.[0]?.[0]],['VL',csl.volume],['IS',csl.issue],['SP',csl.page?.split('-')[0]],['EP',csl.page?.split('-')[1]],['DO',paper.doi],['UR',paper.publisher]]) if(value) lines.push(tag+'  - '+String(value).replace(/[\r\n]/g,' '));
-    lines.push('ER  -'); return {text:lines.join('\n'),message:'RIS format, ready to import into EndNote, Zotero and other reference managers.'};
+    lines.push('ER  -'); return {text:lines.join('\n')};
   }
-  if(style==='bibtex') return {text:new Cite(csl).format('bibtex'),message:'BibTeX format, ready for LaTeX and reference managers.'};
+  if(style==='bibtex') return {text:new Cite(csl).format('bibtex')};
   csl.title='<span class="nocase">'+escapeHTML(csl.title)+'</span>';
   const cite=new Cite(csl), options={template:style,lang:'en-US'};
-  return {text:cite.format('bibliography',{...options,format:'text'}).trim(),html:cite.format('bibliography',{...options,format:'html'})};
+  return {text:cite.format('bibliography',{...options,format:'text'}).trim()};
 }
 function renderCitation() {
   if(!record) return;
   try {
     const reference=formatReference(record,$('style').value,$('articleTitle').value);
     $('citationText').value=reference.text;
-    if(reference.html) $('preview').innerHTML=cleanPreview(reference.html);
-    else $('preview').textContent=reference.message;
+    $('citationWarning').textContent=reference.warning||'';
     $('copy').disabled=false; $('copyStatus').textContent='';
-  } catch(e) { $('copy').disabled=true; notice('Unable to generate the reference: '+e.message,true); }
+  } catch(e) { $('copy').disabled=true; $('citationText').value=''; $('citationWarning').textContent=e.message; }
 }
 function displayRecord() {
   const c=record.csl;
@@ -111,7 +108,7 @@ function displayRecord() {
   $('sourceStatus').textContent=record.pmc?'Search order: PMC → Sci-Hub → offer publisher':'Search order: Sci-Hub → offer publisher';
   $('downloadStatus').textContent='Ready to download'; $('attemptDetails').hidden=true;
   $('articleTitle').disabled=false;
-  $('articleTitle').value=$('style').value==='apa'?sentenceCase(c.title,$('protected').value):c.title;
+  $('articleTitle').value=initialTitle(c.title,$('style').value);
   renderCitation();
 }
 function showSettings() {
@@ -144,7 +141,7 @@ $('lookupForm').addEventListener('submit',async e=>{
   try {
     const doi=normalizeDOI($('doi').value); $('doi').value=doi;
     // Clear old results so a failed lookup cannot download/copy an earlier paper accidentally.
-    record=null; $('paper').hidden=true; $('empty').hidden=false; $('articleTitle').value=''; $('articleTitle').disabled=true; $('citationText').value=''; $('preview').textContent='Searching…'; $('copy').disabled=true;
+    record=null; $('paper').hidden=true; $('empty').hidden=false; $('articleTitle').value=''; $('articleTitle').disabled=true; $('citationText').value=''; $('citationWarning').textContent=''; $('copy').disabled=true;
     lock(true); notice('Searching PubMed and retrieving paper metadata…');
     record=await api('lookup',{doi}); displayRecord(); notice(record.warnings.join('\n'));
   } catch(e) { notice(e.message,true); }
@@ -169,8 +166,9 @@ $('settingsForm').onsubmit=e=>{
 $('loginClose').onclick=()=>$('loginDialog').close();
 $('articleTitle').addEventListener('input',renderCitation);
 $('style').onchange=()=>{
+  updateCustomVisibility();
   if(record) {
-    $('articleTitle').value=$('style').value==='apa'?sentenceCase(record.csl.title,$('protected').value):record.csl.title;
+    $('articleTitle').value=initialTitle(record.csl.title,$('style').value);
     renderCitation();
   }
 };
@@ -202,7 +200,7 @@ $('batchOpen').onclick=()=>openBatch(true);
 $('batchBack').onclick=()=>openBatch(false);
 function batchLock(value) {
   batchBusy=value;
-  for(const id of ['batchFind','batchFolder','batchBrowse','batchStyle','batchDOIs','batchBack']) $(id).disabled=value;
+  for(const id of ['batchFind','batchFolder','batchBrowse','batchStyle','batchDOIs','batchBack','batchCustomExample']) $(id).disabled=value;
   refreshBatchActions();
 }
 function refreshBatchActions() {
@@ -245,9 +243,9 @@ function prepareBatchCitation(item) {
   try {
     const reference=formatReference(item.paper,$('batchStyle').value);
     const button=document.createElement('button');button.type='button';button.className='secondary';button.textContent='Copy citation';
-    const status=document.createElement('p');status.className='row-status';status.setAttribute('role','status');
+    const status=document.createElement('p');status.className='row-status';status.setAttribute('role','status');status.textContent=reference.warning||'';
     button.onclick=async()=>{
-      try {await navigator.clipboard.writeText(reference.text);status.textContent='Copied';}
+      try {await navigator.clipboard.writeText(reference.text);status.textContent=['Copied',reference.warning].filter(Boolean).join('. ');}
       catch {
         status.textContent='Select the reference below and press Ctrl+C.';
         let field=item.citationCell.querySelector('textarea');
@@ -258,7 +256,7 @@ function prepareBatchCitation(item) {
     item.citationCell.replaceChildren(button,status);
   } catch(e) {item.citationCell.textContent='Citation unavailable: '+e.message;}
 }
-$('batchStyle').onchange=()=>{for(const item of batchItems) if(item.paper) prepareBatchCitation(item);};
+$('batchStyle').onchange=()=>{updateCustomVisibility();for(const item of batchItems) if(item.paper) prepareBatchCitation(item);};
 $('batchForm').onsubmit=async e=>{
   e.preventDefault();if(batchBusy) return;
   let dois;
@@ -304,4 +302,48 @@ $('batchDownloadAll').onclick=async()=>{
     $('batchStatus').textContent=`Finished: ${saved} PDFs saved. Any failed papers can be retried individually.`;
   } finally {batchLock(false);}
 };
-updateFolder(); connect();
+function updateCustomVisibility() {
+  $('singleCustom').hidden=$('style').value!=='custom';
+  $('batchCustom').hidden=$('batchStyle').value!=='custom';
+}
+function refreshCustomCitations() {
+  if(record && $('style').value==='custom') renderCitation();
+  if($('batchStyle').value==='custom') for(const item of batchItems) if(item.paper) prepareBatchCitation(item);
+}
+function customStatus(message) {
+  for(const id of ['singleCustomStatus','batchCustomStatus']) $(id).textContent=message;
+}
+async function detectCustomExample(example,revision) {
+  customStatus('Identifying the example paper and detecting its reference format…');
+  try {
+    const sample=await api('style-example',{example});
+    if(revision!==customRevision) return;
+    customDefinition=CustomStyle.infer(example,sample);
+    customStatus('Detected: '+customDefinition.summary);
+    try {localStorage.setItem('citation-custom-style',JSON.stringify({example,definition:customDefinition}));} catch {}
+    if(record && $('style').value==='custom') $('articleTitle').value=initialTitle(record.csl.title,'custom');
+  } catch(e) {
+    if(revision!==customRevision) return;
+    customDefinition=null;customStatus('Unable to detect the format: '+e.message);
+  }
+  if(revision===customRevision) refreshCustomCitations();
+}
+function customExampleInput(event) {
+  clearTimeout(customTimer);const example=event.target.value;
+  for(const id of ['singleCustomExample','batchCustomExample']) if($(id)!==event.target) $(id).value=example;
+  customDefinition=null;const revision=++customRevision;refreshCustomCitations();
+  try {localStorage.removeItem('citation-custom-style');} catch {}
+  if(example.trim().length<30) {customStatus('Paste one complete reference example (at least 30 characters), preferably including its DOI.');return;}
+  customStatus('Waiting for you to finish the example…');
+  customTimer=setTimeout(()=>detectCustomExample(example,revision),1000);
+}
+for(const id of ['singleCustomExample','batchCustomExample']) $(id).addEventListener('input',customExampleInput);
+try {
+  const saved=JSON.parse(localStorage.getItem('citation-custom-style')||'null');
+  if(saved?.definition?.version===1 && typeof saved.definition.template==='string' && saved.definition.authors) {
+    customDefinition=saved.definition;
+    $('singleCustomExample').value=$('batchCustomExample').value=saved.example||'';
+    customStatus('Detected: '+customDefinition.summary);
+  }
+} catch {}
+updateCustomVisibility();updateFolder(); connect();

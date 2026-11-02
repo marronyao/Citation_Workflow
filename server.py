@@ -170,8 +170,20 @@ def lookup(doi):
                    'issue':text(a,'Journal/JournalIssue/Issue'),'page':text(a,'Pagination/StartPage') or text(a,'Pagination/MedlinePgn')}
         csl['title'] = text(a,'ArticleTitle') or csl.get('title','')
         csl['container-title'] = text(a,'Journal/Title') or csl.get('container-title','')
+        csl['container-title-short'] = text(a,'Journal/ISOAbbreviation') or text(article,'MedlineCitation/MedlineJournalInfo/MedlineTA') or csl.get('container-title-short','')
     if not csl or not csl.get('title'):
         raise ValueError('No paper metadata found. Check the DOI or try again later.')
+    short = csl.get('container-title-short') or csl.get('journal-abbreviation') or csl.get('short-container-title')
+    if not short:
+        try:
+            metadata = getjson('https://api.crossref.org/works/'+U.quote(doi, safe=''))['message']
+            short = metadata.get('short-container-title')
+            if not csl.get('page'):
+                csl['page'] = metadata.get('page') or metadata.get('article-number','')
+        except Exception:
+            pass
+    if short:
+        csl['container-title-short'] = short[0] if isinstance(short,list) else short
     csl.update({'id':doi,'DOI':doi})
     result = {'doi':doi,'csl':csl,'pmid':pmid,'pmc':pmc,'warnings':warnings,
               'publisher':'https://doi.org/'+doi,'sources':[]}
@@ -184,6 +196,26 @@ def lookup(doi):
     CACHE[key] = result
     result['key'] = key
     return result
+
+
+def reference_example(payload):
+    example = str(payload.get('example','')).strip()
+    if not 30 <= len(example) <= 6000:
+        raise ValueError('Paste one complete reference example (30–6000 characters).')
+    match = re.search(r'10\.\d{4,9}/[^\s<>"\]]+', example, re.I)
+    if match:
+        doi = match.group().rstrip('.,;')
+        while doi.endswith(')') and doi.count(')') > doi.count('('):
+            doi = doi[:-1]
+        return lookup(doi_normalize(doi))
+    # A strong title match is required. Never infer a style using a merely similar paper.
+    results = getjson('https://api.crossref.org/works?'+U.urlencode({'query.bibliographic':example,'rows':3}))['message']['items']
+    normalise = lambda value: re.sub(r'[^\w]+',' ',html.unescape(re.sub(r'<[^>]+>','',value))).strip().casefold()
+    reference = normalise(example)
+    matches = {item['DOI'] for item in results if item.get('DOI') and any(len(normalise(title)) > 12 and normalise(title) in reference for title in item.get('title',[]))}
+    if len(matches) != 1:
+        raise ValueError('The example paper could not be identified reliably. Add its DOI to the reference and try again.')
+    return lookup(next(iter(matches)))
 
 
 class Links(HTMLParser):
@@ -376,7 +408,7 @@ class Handler(SimpleHTTPRequestHandler):
             self.reply({'ok':True,'token':TOKEN,'platform':os.name}); return
         # Serve only public frontend assets, never local source/config/dependencies.
         path = U.urlsplit(self.path).path
-        if path not in ('/','/index.html','/app.js','/styles.css','/vendor/citation.js','/favicon.svg'):
+        if path not in ('/','/index.html','/app.js','/custom-style.js','/styles.css','/vendor/citation.js','/favicon.svg'):
             self.send_error(404); return
         super().do_GET()
     def do_POST(self):
@@ -393,6 +425,8 @@ class Handler(SimpleHTTPRequestHandler):
                 result = download(payload)
             elif self.path == '/api/folder':
                 result = choose_folder(payload.get('initial',''))
+            elif self.path == '/api/style-example':
+                result = reference_example(payload)
             else:
                 self.reply({'error':'Unknown API'},404); return
             self.reply(result)

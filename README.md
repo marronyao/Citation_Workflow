@@ -14,9 +14,9 @@ Citation Workflow is a research tool for biological literature, with a dark inte
 - Searches PubMed and verifies an exact DOI match, with DOI registration metadata as a fallback.
 - Tries third-party PDF databases first: PubMed Central, then automatically discovered Sci-Hub mirrors. Offers publisher links only after the database search cannot retrieve a PDF.
 - Saves verified PDFs using the original article title, replacing unsupported Windows filename characters. Duplicate downloads receive a numeric suffix rather than overwriting an existing file.
-- Generates **APA 7, Vancouver, Harvard, BibTeX and RIS** references.
+- Generates **APA 7, Vancouver, Harvard, BibTeX, RIS and custom** references.
 - Applies APA sentence case to article titles and title case to journal names, with editable titles and a list of proper nouns to preserve.
-- Shows a formatted preview, including italics, and copies the reference as plain text.
+- Provides an editable plain-text citation and copies it directly.
 - Uses British English throughout the interface.
 
 ## Getting started on Windows
@@ -85,7 +85,17 @@ APA 7, Vancouver and Harvard are rendered using Citation.js and citeproc-js. Bib
 
 APA article titles use sentence case, preserving abbreviations and mixed-case terms such as DNA and mRNA. Automatic case conversion cannot reliably identify every person, place, species or gene name. Add terms under **APA capitalisation & proper nouns**, or edit the title directly. Titles supplied entirely in capitals need particular care.
 
-The formatted preview preserves journal and volume italics. **Copy citation** copies only plain text. Editing the plain-text box changes what is copied; changing the style or article title regenerates its contents. Paper titles and other bibliographic metadata remain in their original language.
+**Copy citation** copies plain text. Editing the plain-text box changes what is copied; changing the style or article title regenerates its contents. Paper titles and other bibliographic metadata remain in their original language.
+
+### Custom styles from an example
+
+Select **Custom · from an example** in either single-paper or batch mode, then paste one complete journal-article reference. Detection starts automatically after you stop typing. Including the example’s DOI gives the most reliable match; otherwise the companion searches Crossref and requires one unambiguous title match.
+
+The detected template preserves field order, punctuation, author-name convention, visible “et al.” usage, year placement, page-range style and full or abbreviated journal names. The same custom template is shared between single and batch mode and saved in this browser. An incomplete or ambiguous example disables custom citation copying until it can be identified, rather than reusing an earlier format.
+
+Journal abbreviations are taken from PubMed ISOAbbreviation/MedlineTA or Crossref abbreviation metadata. A dotted example produces dotted abbreviations; an undotted example preserves the undotted form. If no verified abbreviation is available for a target paper, the full journal name is used with a visible note. Abbreviations are never created by arbitrarily shortening a new journal name.
+
+One plain-text example cannot reveal hidden journal rules such as an author limit not exercised in the example, typography, or every special article type. Review the generated text against the journal’s instructions. The example and saved template stay in browser storage; the example is sent to the local companion and, when no DOI is supplied, to Crossref for bibliographic identification. No AI API key is needed.
 
 ## How the website and companion work together
 
@@ -120,7 +130,7 @@ The bundled citation engine is committed so the application works without instal
 
 | File | Purpose |
 | --- | --- |
-| `index.html`, `styles.css`, `app.js` | Static interface |
+| `index.html`, `styles.css`, `app.js`, `custom-style.js` | Static interface and custom reference inference |
 | `server.py`, `start.bat` | Windows companion and launcher |
 | `citation-entry.js`, `vendor/citation.js` | Citation engine entry point and browser bundle |
 | `tests/` | DOI, path, download and formatting checks |

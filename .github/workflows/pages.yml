@@ -44,7 +44,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site/vendor
-          cp index.html styles.css app.js favicon.svg _site/
+          cp index.html styles.css app.js custom-style.js favicon.svg _site/
           cp vendor/citation.js _site/vendor/
           cp -r vendor/licenses _site/vendor/
           cp THIRD_PARTY_NOTICES.md _site/
