@@ -1,4 +1,4 @@
-"""Citation Workflow local Windows companion. Python 3.10+, standard library only."""
+"""Citation Workflow local companion for Windows, macOS and Linux. Python 3.10+."""
 import argparse
 from collections import OrderedDict
 from contextlib import contextmanager
@@ -9,9 +9,11 @@ import ipaddress
 import json
 import ntpath
 import os
+import posixpath
 from pathlib import Path
 import re
 import secrets
+import shutil
 import subprocess
 import socket
 import sys
@@ -38,8 +40,39 @@ ALLOWED_ORIGIN = None
 PICKER_LOCK = threading.Lock()
 
 
-def choose_folder(initial=''):
+def host_system():
+    if sys.platform == 'win32': return 'windows'
+    if sys.platform == 'darwin': return 'macos'
+    if sys.platform.startswith('linux'): return 'linux'
+    raise ValueError('The companion supports Windows, macOS and Linux.')
+
+
+def download_folder(value, system=None):
+    system = system or host_system()
+    if system == 'windows': return windows_folder(value)
+    if system not in ('macos', 'linux'):
+        raise ValueError('Choose Windows, macOS or Linux.')
+    value = str(value).strip().strip('\"\'').strip()
+    if re.search(r'[\x00-\x1f]', value) or not (value.startswith('/') or value == '~' or value.startswith('~/')):
+        raise ValueError('Enter an absolute path or ~/Downloads for macOS or Linux.')
+    # Expand ~ on the host before resolving ..; ~ is not a literal directory.
+    return value if value.startswith('~') else posixpath.normpath(value)
+
+
+def require_host_system(system):
+    system = system or host_system()
+    if system not in ('windows', 'macos', 'linux'):
+        raise ValueError('Choose Windows, macOS or Linux.')
+    if system != host_system():
+        names = {'windows':'Windows', 'macos':'macOS', 'linux':'Linux'}
+        raise ValueError('The companion is running on '+names[host_system()]+'. Choose that system and a folder on this computer.')
+    return system
+
+
+def choose_folder(initial='', system=None):
     """Run Tk on its own main thread/process so HTTP worker threads stay safe."""
+    system = require_host_system(system)
+    if initial: initial = os.path.expanduser(download_folder(initial, system))
     if not PICKER_LOCK.acquire(blocking=False):
         raise ValueError('A folder selection window is already open.')
     script = '''import json, sys, tkinter as tk
@@ -62,7 +95,7 @@ finally:
             raise ValueError('The folder picker could not open. Enter the folder path manually.')
         selected = json.loads(result.stdout)['folder']
         if selected:
-            selected = windows_folder(selected)
+            selected = download_folder(selected, system)
             if not Path(selected).is_dir():
                 raise ValueError('The selected folder no longer exists.')
         return {'folder':selected}
@@ -105,7 +138,8 @@ def windows_folder(value):
 
 
 def filename(title):
-    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', html.unescape(title)).strip(' .')[:160].rstrip(' .') or 'article'
+    name = re.sub(r'[<>:"/\\|?*\x00-\x1f]', '_', html.unescape(title)).strip(' .')[:160]
+    name = name.encode('utf-8')[:200].decode('utf-8', 'ignore').rstrip(' .') or 'article'
     if re.match(r'^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$)', name, re.I):
         name = '_' + name
     return name + '.pdf'
@@ -135,7 +169,7 @@ def fetch(url, accept='*/*', limit=8_000_000):
             if pause > remaining_timeout():
                 raise TimeoutError('arXiv rate-limit wait exceeds the search time limit.')
             time.sleep(pause); LAST_ARXIV=time.monotonic()
-    req = R.Request(url, headers={'User-Agent':'CitationWorkflow/0.2 (local research tool)','Accept':accept})
+    req = R.Request(url, headers={'User-Agent':'CitationWorkflow/0.3 (local research tool)','Accept':accept})
     with R.build_opener(Redirect()).open(req, timeout=remaining_timeout()) as res:
         data=res.read(limit+1)
         if len(data)>limit:
@@ -254,6 +288,11 @@ def find_pdf(url, record=None, trusted=False):
 def browser_search(url):
     """Render search with an isolated, hidden browser; never reuse a signed-in profile."""
     browsers = []
+    if sys.platform == 'darwin':
+        for base in (Path('/Applications'), Path.home()/'Applications'):
+            browsers.extend([base/'Google Chrome.app/Contents/MacOS/Google Chrome', base/'Microsoft Edge.app/Contents/MacOS/Microsoft Edge'])
+    if sys.platform.startswith('linux'):
+        browsers.extend(Path(path) for name in ('google-chrome','google-chrome-stable','chromium','chromium-browser','microsoft-edge') if (path:=shutil.which(name)))
     for base in (os.environ.get('PROGRAMFILES', ''), os.environ.get('PROGRAMFILES(X86)', ''), os.environ.get('LOCALAPPDATA', '')):
         if base:
             browsers.extend([Path(base)/'Google/Chrome/Application/chrome.exe', Path(base)/'Microsoft/Edge/Application/msedge.exe'])
@@ -325,9 +364,9 @@ def publisher_choices(record):
 
 
 def download(payload):
-    folder=windows_folder(payload.get('folder',''))
-    if os.name!='nt':raise ValueError('Only Windows is currently supported.')
-    target=Path(folder)
+    system=require_host_system(payload.get('system'))
+    folder=download_folder(payload.get('folder',''), system)
+    target=Path(os.path.expanduser(folder))
     if not target.is_dir():raise ValueError('The folder does not exist. Create it first or choose an existing folder.')
     record=CACHE.get(payload.get('key'))
     if not record and (payload.get('identifier') or payload.get('doi')):
@@ -376,7 +415,7 @@ class Handler(SimpleHTTPRequestHandler):
         if not self.origin_ok() or self.headers.get('Host') not in (f'127.0.0.1:{self.server.server_port}',f'localhost:{self.server.server_port}'):
             self.reply({'error':'Origin / Host blocked'},403); return
         if self.path == '/api/health':
-            self.reply({'ok':True,'token':TOKEN,'platform':os.name}); return
+            self.reply({'ok':True,'token':TOKEN,'platform':os.name,'system':host_system()}); return
         # Serve only public frontend assets, never local source/config/dependencies.
         path = U.urlsplit(self.path).path
         if path not in ('/','/index.html','/app.js','/custom-style.js','/styles.css','/vendor/citation.js','/favicon.svg'):
@@ -397,7 +436,7 @@ class Handler(SimpleHTTPRequestHandler):
             elif self.path == '/api/download':
                 result = download(payload)
             elif self.path == '/api/folder':
-                result = choose_folder(payload.get('initial',''))
+                result = choose_folder(payload.get('initial',''), payload.get('system'))
             elif self.path == '/api/style-example':
                 result = reference_example(payload)
             else:

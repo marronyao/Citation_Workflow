@@ -35,10 +35,10 @@ class CoreTests(unittest.TestCase):
     def test_folder_picker_selects_existing_folder_and_cancellation(self):
         selected = subprocess.CompletedProcess([], 0, json.dumps({'folder':'D:/Research papers'}))
         cancelled = subprocess.CompletedProcess([], 0, '{"folder":""}')
-        with patch.object(server.subprocess, 'run', side_effect=[selected, cancelled]) as run, patch.object(server.Path, 'is_dir', return_value=True):
+        with patch.object(server,'host_system',return_value='windows'), patch.object(server.subprocess, 'run', side_effect=[selected, cancelled]) as run, patch.object(server.Path, 'is_dir', return_value=True):
             self.assertEqual(server.choose_folder('D:/Papers'), {'folder':'D:\\Research papers'})
             self.assertEqual(server.choose_folder(), {'folder':''})
-        self.assertEqual(run.call_args_list[0].args[0][-1], 'D:/Papers')
+        self.assertEqual(run.call_args_list[0].args[0][-1], 'D:\\Papers')
         self.assertFalse(server.PICKER_LOCK.locked())
 
     def test_folder_picker_failure_releases_lock(self):
@@ -60,6 +60,29 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(server.filename('A: B / C?'), 'A_ B _ C_.pdf')
         self.assertEqual(server.filename('CON'), '_CON.pdf')
         self.assertLessEqual(len(server.filename('x'*400)),164)
+        self.assertLessEqual(len(server.filename('論文'*160).encode('utf-8')),204)
+
+    def test_posix_paths_and_system_validation(self):
+        self.assertEqual(server.download_folder('"/Users/test/Research papers"','macos'),'/Users/test/Research papers')
+        self.assertEqual(server.download_folder('/home/test/../test/Papers','linux'),'/home/test/Papers')
+        self.assertEqual(server.download_folder('~/Downloads','linux'),'~/Downloads')
+        self.assertEqual(server.download_folder('~/../Papers','linux'),'~/../Papers')
+        for system in ('linux','macos'):
+            for value in ('relative/path','D:/Papers','/tmp/a\x00b'):
+                with self.assertRaises(ValueError):server.download_folder(value,system)
+        with self.assertRaises(ValueError):server.download_folder('/tmp/Papers','invalid')
+        with patch.object(server,'host_system',return_value='linux'):
+            self.assertEqual(server.require_host_system('linux'),'linux')
+            with self.assertRaisesRegex(ValueError,'running on Linux'):server.download({'folder':'D:/Papers','system':'windows'})
+
+    def test_host_system_identification(self):
+        for actual,expected in [('win32','windows'),('darwin','macos'),('linux','linux')]:
+            with patch.object(server.sys,'platform',actual):self.assertEqual(server.host_system(),expected)
+
+    def test_posix_folder_picker_preserves_selected_path(self):
+        selected=subprocess.CompletedProcess([],0,json.dumps({'folder':'/home/test/Papers'}))
+        with patch.object(server,'host_system',return_value='linux'),patch.object(server.subprocess,'run',return_value=selected),patch.object(server.Path,'is_dir',return_value=True):
+            self.assertEqual(server.choose_folder('/home/test','linux'),{'folder':'/home/test/Papers'})
 
 
     def test_login_html_is_not_saved_as_pdf(self):

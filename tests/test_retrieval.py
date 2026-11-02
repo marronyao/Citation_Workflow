@@ -1,5 +1,6 @@
 import json
 import tempfile
+import os
 import unittest
 from contextlib import nullcontext
 from pathlib import Path
@@ -157,6 +158,14 @@ class CacheAndDownloadTests(unittest.TestCase):
                 a=server.download({'key':self.key,'folder':folder});b=server.download({'key':self.key,'folder':folder})
                 self.assertNotEqual(a['path'],b['path']);self.assertEqual(Path(a['path']).read_bytes(),b'%PDF-test')
             retrieve.assert_called_once()
+
+    @unittest.skipIf(os.name=='nt','POSIX home expansion runs on macOS/Linux CI')
+    def test_posix_download_expands_home_and_saves_real_file(self):
+        with tempfile.TemporaryDirectory(dir=server.ROOT) as folder:
+            with patch.dict(os.environ,{'HOME':folder}),patch.object(server,'cached_pdf',return_value={'ok':True,'pdf':b'%PDF-test','source':'test'}):
+                result=server.download({'key':self.key,'folder':'~','system':server.host_system()})
+            self.assertEqual(Path(result['path']).parent,Path(folder))
+            self.assertEqual(Path(result['path']).read_bytes(),b'%PDF-test')
 
     def test_failure_returns_official_options_and_writes_nothing(self):
         with patch.object(server.SOURCE_ROUTER,'retrieve',return_value={'ok':False,'attempts':['All sources unavailable']}),patch.object(server,'safe_url',side_effect=lambda url:url):

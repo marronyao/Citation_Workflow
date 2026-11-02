@@ -2,8 +2,12 @@
 const $ = id => document.getElementById(id);
 const API = 'http://127.0.0.1:8765';
 let token = '', record = null, busy = false, pendingDownload = false;
-let config = {folder:'', autoDownload:true};
+let config = {folder:'', autoDownload:true, system:'windows', folders:{}};
 try { Object.assign(config, JSON.parse(localStorage.getItem('citation-settings') || '{}')); } catch {}
+if(!['windows','macos','linux'].includes(config.system)) config.system='windows';
+if(!config.folders || typeof config.folders!=='object' || Array.isArray(config.folders)) config.folders={};
+config.folders[config.system]=config.folder;
+const SYSTEMS={windows:{name:'Windows',example:'D:/Papers'},macos:{name:'macOS',example:'/Users/yourname/Downloads'},linux:{name:'Linux',example:'/home/yourname/Downloads'}};
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function normalizeDOI(value) {
   let s=value.trim().replace(/^["']+|["']+$/g,'').trim();
@@ -18,8 +22,14 @@ function normalizeDOI(value) {
   if(!/^10\.\d{4,9}\/[^\s<>"']+$/i.test(s)) throw Error('Enter a DOI, arXiv ID, preprint link or supported conference paper link.');
   return s;
 }
-function normalizeFolder(s) {
-  s = s.trim().replace(/^["']+|["']+$/g,'').trim().replaceAll('/','\\');
+function normalizeFolder(s, system=config.system) {
+  s = s.trim().replace(/^["']+|["']+$/g,'').trim();
+  if(!SYSTEMS[system]) throw Error('Choose Windows, macOS or Linux.');
+  if(system!=='windows') {
+    if(/[\x00-\x1f]/.test(s) || !(s.startsWith('/') || s==='~' || s.startsWith('~/'))) throw Error('Enter an absolute '+SYSTEMS[system].name+' path, e.g. '+SYSTEMS[system].example+', or ~/Downloads.');
+    return s;
+  }
+  s=s.replaceAll('/','\\');
   if (!/^[a-z]:\\/i.test(s) || /[<>"|?*\x00-\x1f]/.test(s) || s.slice(2).includes(':')) throw Error('Enter an absolute Windows path, e.g. D:\\Papers.');
   return s;
 }
@@ -51,7 +61,7 @@ function journalCase(title) {
   });
 }
 function notice(message, error=false) { $('notice').textContent=message; $('notice').hidden=!message; $('notice').classList.toggle('error',error); }
-function lock(value) { busy=value; $('search').disabled=value; $('download').disabled=value; $('doi').disabled=value; $('batchOpen').disabled=value; $('settingsOpen').disabled=value; }
+function lock(value) { busy=value; for(const id of ['search','download','doi','batchOpen','settingsOpen','downloadSystem']) $(id).disabled=value; }
 async function connect() {
   try {
     const r = await fetch(API+'/api/health',{signal:AbortSignal.timeout(3500)});
@@ -63,7 +73,7 @@ async function connect() {
   }
 }
 async function api(route, payload) {
-  if (!token && !await connect()) throw Error('Double-click start.bat to start the local assistant, then open http://127.0.0.1:8765. If it is already running, check that your browser allows local network access.');
+  if (!token && !await connect()) throw Error('Start the local companion: start.bat on Windows, or sh start.sh on macOS / Linux. Then open http://127.0.0.1:8765. If it is already running, check that your browser allows local network access.');
   const response=await fetch(API+'/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Citation-Token':token},body:JSON.stringify(payload),signal:AbortSignal.timeout(600000)});
   const data=await response.json();
   if(!response.ok && data.error==='Unknown API') throw Error('Update the local companion from GitHub, close the old companion and restart start.bat, then refresh this page.');
@@ -141,15 +151,39 @@ function displayRecord() {
 }
 function showSettings() {
   $('folder').value=config.folder; $('autoDownload').checked=config.autoDownload;
+  $('folderSystem').value=config.system;
   $('settingsError').textContent=''; $('settings').showModal();
 }
-function updateFolder() { $('folderLabel').textContent=config.folder || 'No Windows folder selected'; }
+function persistSettings() {
+  config.folders[config.system]=config.folder;
+  try {localStorage.setItem('citation-settings',JSON.stringify(config));} catch {}
+}
+function updateFolder() {
+  const system=SYSTEMS[config.system];
+  $('folderLabel').textContent=config.folder || 'No '+system.name+' folder selected';
+  for(const id of ['downloadSystem','folderSystem','batchSystem']) $(id).value=config.system;
+  for(const id of ['folder','batchFolder']) $(id).placeholder='e.g. '+system.example;
+  $('folderHelp').textContent=config.system==='windows'?'Choose an existing Windows folder. Forward slashes, backslashes and surrounding quotation marks are accepted.':'Choose an existing '+system.name+' folder. Use an absolute path or ~/Downloads for your home folder.';
+}
+function changeSystem(system) {
+  if(!SYSTEMS[system]) return;
+  if(!$('batchWorkspace').hidden) {
+    try {config.folder=normalizeFolder($('batchFolder').value);} catch {}
+  }
+  config.folders[config.system]=config.folder;
+  config.system=system; config.folder=config.folders[system] || '';
+  persistSettings();updateFolder();
+  $('folder').value=$('batchFolder').value=config.folder;
+  $('settingsError').textContent=$('batchStatus').textContent='';
+  refreshBatchActions();
+}
+for(const id of ['downloadSystem','folderSystem','batchSystem']) $(id).onchange=event=>changeSystem(event.target.value);
 async function doDownload() {
   if(!record || busy) return;
   if(!config.folder) { pendingDownload=true; showSettings(); return; }
   lock(true); $('downloadStatus').textContent='Finding full text and downloading the PDF…'; notice('Checking PDF sources in order. Some websites may take a moment to respond.');
   try {
-    const result=await api('download',{key:record.key,doi:record.doi,identifier:record.identifier,folder:config.folder});
+    const result=await api('download',{key:record.key,doi:record.doi,identifier:record.identifier,folder:config.folder,system:config.system});
     showAttempts(result);
     if(result.ok) {
       $('downloadStatus').textContent=`PDF saved · ${(result.bytes/1024/1024).toFixed(2)} MB`;
@@ -197,8 +231,8 @@ $('settingsForm').onsubmit=e=>{
   e.preventDefault();
   try {
     const folder=normalizeFolder($('folder').value);
-    config={folder,autoDownload:$('autoDownload').checked};
-    try {localStorage.setItem('citation-settings',JSON.stringify(config));} catch {}
+    config.folder=folder;config.autoDownload=$('autoDownload').checked;
+    persistSettings();
     updateFolder(); $('settings').close();
     if(pendingDownload){pendingDownload=false;doDownload();}
   } catch(e) { $('settingsError').textContent=e.message; }
@@ -218,12 +252,14 @@ $('copy').onclick=async()=>{
   catch {$('citationText').focus();$('citationText').select();$('copyStatus').textContent='Press Ctrl+C to copy the selected text';}
 };
 async function browseFolder(input, button, status) {
-  button.disabled=true; const label=button.textContent; button.textContent='Choose in Windows…'; status.textContent='';
+  button.disabled=true; const label=button.textContent,system=config.system; button.textContent='Choose in '+SYSTEMS[system].name+'…'; status.textContent='';
+  const selectors=['downloadSystem','folderSystem','batchSystem'];
+  const previous=selectors.map(id=>$(id).disabled);selectors.forEach(id=>$(id).disabled=true);
   try {
-    const result=await api('folder',{initial:input.value});
+    const result=await api('folder',{initial:input.value,system});
     if(result.folder) { input.value=result.folder; input.dispatchEvent(new Event('change')); }
   } catch(e) { status.textContent=e.message; }
-  finally {button.disabled=false;button.textContent=label;}
+  finally {button.disabled=false;button.textContent=label;selectors.forEach((id,i)=>$(id).disabled=previous[i]);}
 }
 $('folderBrowse').onclick=()=>browseFolder($('folder'),$('folderBrowse'),$('settingsError'));
 $('batchBrowse').onclick=()=>browseFolder($('batchFolder'),$('batchBrowse'),$('batchStatus'));
@@ -240,23 +276,24 @@ $('batchOpen').onclick=()=>openBatch(true);
 $('batchBack').onclick=()=>openBatch(false);
 function batchLock(value) {
   batchBusy=value;
-  for(const id of ['batchFind','batchFolder','batchBrowse','batchStyle','batchDOIs','batchBack','batchCustomExample']) $(id).disabled=value;
+  for(const id of ['batchFind','batchFolder','batchBrowse','batchStyle','batchDOIs','batchBack','batchCustomExample','batchSystem','downloadSystem']) $(id).disabled=value;
   refreshBatchActions();
 }
 function refreshBatchActions() {
   const folder=$('batchFolder').value.trim();
+  const destination=config.system+'\n'+folder;
   for(const item of batchItems) if(item.downloadButton) {
-    item.downloadButton.disabled=batchBusy || !item.paper || item.savedFolder===folder;
-    item.downloadButton.textContent=item.savedFolder===folder?'Downloaded':'Download PDF';
+    item.downloadButton.disabled=batchBusy || !item.paper || item.savedFolder===destination;
+    item.downloadButton.textContent=item.savedFolder===destination?'Downloaded':'Download PDF';
   }
-  $('batchDownloadAll').disabled=batchBusy || !batchItems.some(item=>item.paper && item.savedFolder!==folder);
-  const saved=batchItems.filter(item=>item.savedFolder===folder).length;
+  $('batchDownloadAll').disabled=batchBusy || !batchItems.some(item=>item.paper && item.savedFolder!==destination);
+  const saved=batchItems.filter(item=>item.savedFolder===destination).length;
   $('batchSummary').textContent=`${saved} of ${batchItems.length} PDFs saved`;
 }
 function saveBatchFolder() {
   const folder=normalizeFolder($('batchFolder').value);
   $('batchFolder').value=folder; config.folder=folder; updateFolder();
-  try {localStorage.setItem('citation-settings',JSON.stringify(config));} catch {}
+  persistSettings();
   refreshBatchActions();return folder;
 }
 $('batchFolder').onchange=()=>{try {saveBatchFolder();} catch(e) {$('batchStatus').textContent=e.message;}};
@@ -330,8 +367,8 @@ $('batchForm').onsubmit=async e=>{
 async function downloadBatchItem(item,folder) {
   item.status.textContent='Searching sources and saving PDF…';item.links.replaceChildren();
   try {
-    const result=await api('download',{key:item.paper.key,doi:item.paper.doi,identifier:item.paper.identifier,folder});
-    if(result.ok) {item.savedFolder=folder;item.status.textContent='Saved to '+result.path;}
+    const result=await api('download',{key:item.paper.key,doi:item.paper.doi,identifier:item.paper.identifier,folder,system:config.system});
+    if(result.ok) {item.savedFolder=config.system+'\n'+folder;item.status.textContent='Saved to '+result.path;}
     else {
       item.status.textContent='PDF unavailable. Choose a publisher link or retry.';
       (result.publishers||[{name:'Open publisher',url:result.login}]).forEach(choice=>link(choice.name,choice.url,item.links));
@@ -342,13 +379,14 @@ async function downloadBatchItem(item,folder) {
 $('batchDownloadAll').onclick=async()=>{
   if(batchBusy) return;
   let folder;try {folder=saveBatchFolder();} catch(e) {$('batchStatus').textContent=e.message;return;}
-  const pending=batchItems.filter(item=>item.paper && item.savedFolder!==folder);batchLock(true);
+  const destination=config.system+'\n'+folder;
+  const pending=batchItems.filter(item=>item.paper && item.savedFolder!==destination);batchLock(true);
   try {
     for(const [index,item] of pending.entries()) {
       $('batchStatus').textContent=`Downloading PDF ${index+1} of ${pending.length}…`;
       await downloadBatchItem(item,folder);refreshBatchActions();
     }
-    const saved=batchItems.filter(item=>item.savedFolder===folder).length;
+    const saved=batchItems.filter(item=>item.savedFolder===destination).length;
     $('batchStatus').textContent=`Finished: ${saved} PDFs saved. Any failed papers can be retried individually.`;
   } finally {batchLock(false);}
 };

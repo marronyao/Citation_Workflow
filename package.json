@@ -1,7 +1,7 @@
 {
   "name": "citation-workflow",
-  "version": "0.2.0",
-  "description": "Windows scholarly full-text search, PDF download and citation workflow",
+  "version": "0.3.0",
+  "description": "Cross-platform scholarly full-text search, PDF download and citation workflow",
   "main": "index.js",
   "scripts": {
     "build": "esbuild citation-entry.js --bundle --minify --outfile=vendor/citation.js",

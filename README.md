@@ -2,7 +2,7 @@
 
 Find a paper by DOI, preprint ID or repository link, save its PDF and generate a reference — in one workspace.
 
-Citation Workflow is a research tool for biological literature, with a dark interface, direct full-text source search and editable references. The website runs on GitHub Pages; a small Windows companion handles full-text retrieval and saves PDFs to your chosen folder.
+Citation Workflow is a research tool for biological literature, with a dark interface, direct full-text source search and editable references. The website runs on GitHub Pages; a small local companion for Windows, macOS and Linux handles full-text retrieval and saves PDFs to your chosen folder.
 
 **[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Developer’s website](https://marronyao.com/)**
 
@@ -21,7 +21,7 @@ Citation Workflow is a research tool for biological literature, with a dark inte
 - Provides an editable plain-text citation and copies it directly.
 - Uses British English throughout the interface.
 
-## Getting started on Windows
+## Getting started
 
 ### 1. Download the project
 
@@ -38,7 +38,15 @@ Install **Python 3.10 or later**, with Python available on your PATH. Chrome or 
 
 Double-click **`start.bat`**. Keep the companion’s command window open while using the website. A local copy opens at **http://127.0.0.1:8765/**; you can also use the [GitHub Pages website](https://marronyao.github.io/Citation_Workflow/) while the companion is running.
 
-To start it from a terminal:
+On **macOS or Linux**, open a terminal in the extracted project folder and run:
+
+```sh
+sh start.sh
+```
+
+This uses `python3`. Alternatively, run `python3 server.py --origin https://marronyao.github.io --open-browser`. The folder picker requires Python's Tkinter component and a graphical desktop; if either is unavailable, enter the folder path manually. Chrome, Edge or Chromium can provide the optional browser-rendered search fallback on Linux; Chrome or Edge is supported on macOS.
+
+To start it from a Windows terminal:
 
 ```powershell
 python server.py --origin https://marronyao.github.io --open-browser
@@ -48,7 +56,7 @@ If your browser asks for permission to connect to the local network, allow it fo
 
 ### 3. Find and save a paper
 
-1. Select **Set download folder** above the DOI search. Enter an existing Windows folder, or select **Browse folders** to open the native Windows folder picker.
+1. Choose **Windows**, **macOS** or **Linux** in the download-folder area (Windows is the default). Select **Set download folder** and enter an existing folder, or select **Browse folders**. The selected system must match the computer running the companion; this is a local save location, not a remote destination. Each system's last saved folder is remembered separately, and the selection is shared with batch mode.
 2. Enter a DOI, arXiv ID or supported paper link and select **Find paper**. The tool reads reference metadata and immediately searches suitable full-text sources.
 3. Review the paper details and reference. PDFs are saved automatically by default after a source is found; turn this off in settings if you prefer to select **Download PDF** yourself.
 4. Choose a reference style, check the title’s capitalisation and select **Copy citation**.
@@ -59,9 +67,18 @@ Accepted folder examples:
 D:\Papers
 D:/Papers
 "D:/Research papers"
+/Users/yourname/Downloads
+/home/yourname/Downloads
+~/Downloads
 ```
 
-Only absolute Windows drive paths are supported. The folder must already exist; UNC network paths are not currently supported.
+Windows requires an absolute drive path; UNC network paths are not currently supported. macOS and Linux accept absolute paths or `~` / `~/...` for the current user's home directory. The folder must already exist. The browser remembers your selected system; a first visit defaults to Windows.
+
+## Feedback
+
+Select **Feedback** next to **Batch download** on the homepage, or in the top-right corner in batch mode, to open [GitHub Issues](https://github.com/marronyao/Citation_Workflow/issues/new/choose). Choose a bug report or suggestion template. A GitHub account is required to submit; issues are public. The link opens GitHub without submitting anything automatically.
+
+Twikoo is also compatible with static frontends, but its comments need a separately hosted backend. This project currently uses GitHub Issues, so no extra comment service or database is needed.
 
 ## Batch downloads
 
@@ -81,7 +98,7 @@ Sci-Hub, Z-Library, Library Genesis and Anna’s Archive mirror candidates are d
 
 If no PDF is retrieved, a dialogue offers official links from the DOI/repository metadata and a Google search link. This handles publishers such as Nature, Cell Press, Elsevier, Wiley, ACS, RSC, Springer, IEEE and ACM through their article metadata, without treating publisher sites as automatic fallbacks. A source failure means retrieval failed, not that the paper definitely has no free copy.
 
-Searches have per-source and overall time limits. Found PDFs are checked for a PDF header and temporarily cached locally with a 30-minute entry expiry and a 512 MB total cache limit (expired files are removed on subsequent cache access or when the companion exits), so a later save can reuse the retrieved file. Larger batches may evict earlier files, which are searched again when needed. Copies are saved to the chosen Windows folder only after a download action, or when automatic saving is enabled. Individual downloads remain limited to 80 MB.
+Searches have per-source and overall time limits. Found PDFs are checked for a PDF header and temporarily cached locally with a 30-minute entry expiry and a 512 MB total cache limit (expired files are removed on subsequent cache access or when the companion exits), so a later save can reuse the retrieved file. Larger batches may evict earlier files, which are searched again when needed. Copies are saved to the chosen local folder only after a download action, or when automatic saving is enabled. Individual downloads remain limited to 80 MB.
 
 ## Conference papers and preprints
 
@@ -125,13 +142,13 @@ GitHub Pages / local webpage
           │
           │ DOI lookup and download requests
           ▼
-Windows companion at 127.0.0.1:8765
+Local companion at 127.0.0.1:8765
           ├── DOI / conference / preprint metadata
           ├── Full-text and PDF sources
-          └── Your selected Windows folder
+          └── Your selected local folder
 ```
 
-GitHub Pages hosts the static interface and cannot run the Python companion or write directly to a Windows folder. The companion must run on the computer where PDFs will be saved.
+GitHub Pages hosts the static interface and cannot run the Python companion or write directly to a local folder. The companion must run on the computer where PDFs will be saved.
 
 The companion listens only on the loopback interface. It accepts its local origin and, when started with the command above, `https://marronyao.github.io`. API requests that initiate lookups or downloads require a random session token. The local server exposes only the frontend assets, rather than arbitrary local files.
 
@@ -139,7 +156,7 @@ Folder and automatic-download preferences are stored in the browser’s local st
 
 ## Development
 
-Use Node.js 22 or later and Python 3.10 or later on Windows:
+Use Node.js 22 or later and Python 3.10 or later on Windows, macOS or Linux:
 
 ```powershell
 npm ci
@@ -152,12 +169,12 @@ The bundled citation engine is committed so the application works without instal
 | File | Purpose |
 | --- | --- |
 | `index.html`, `styles.css`, `app.js`, `custom-style.js` | Static interface and custom reference inference |
-| `server.py`, `paper_metadata.py`, `fulltext_sources.py`, `start.bat` | Windows companion, metadata, source routing and launcher |
+| `server.py`, `paper_metadata.py`, `fulltext_sources.py`, `start.bat`, `start.sh` | Cross-platform companion, metadata, source routing and launchers |
 | `citation-entry.js`, `vendor/citation.js` | Citation engine entry point and browser bundle |
 | `tests/` | DOI, path, download and formatting checks |
 | `.github/workflows/pages.yml` | Checks and GitHub Pages deployment |
 
-The deployment workflow checks the project on Windows and publishes only frontend assets and dependency notices to Pages. It excludes downloaded papers, local settings, Python source and development files from the website artifact. The project source remains available in this public repository.
+The deployment workflow checks the project on Windows, macOS and Linux and publishes only frontend assets and dependency notices to Pages. It excludes downloaded papers, local settings, Python source and development files from the website artifact. The project source remains available in this public repository.
 
 ## Sources and acknowledgements
 
