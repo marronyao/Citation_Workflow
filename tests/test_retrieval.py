@@ -181,3 +181,10 @@ class CacheAndDownloadTests(unittest.TestCase):
         with server.request_budget(0):
             with self.assertRaises(TimeoutError):server.remaining_timeout()
 
+    def test_public_catalogue_download_routes_are_followed(self):
+        for route in ('/slow_download/test','/fast_download/test','/dl/1234/file'):
+            responses=[(('<a href="'+route+'">Public full text</a>').encode(),'https://annas-archive.example/md5/test','text/html'),(b'%PDF-test','https://example.org/article.pdf','application/pdf')]
+            with patch.object(server,'fetch',side_effect=responses):
+                pdf,_=server.find_pdf('https://annas-archive.example/md5/test')
+            self.assertTrue(pdf.startswith(b'%PDF-'))
+

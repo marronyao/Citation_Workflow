@@ -198,7 +198,7 @@ class Links(HTMLParser):
             self.pdfs.append(a.get('src') or a.get('data') or '')
         if tag=='a' and a.get('href'):
             href=a['href'];self.current=href;self.current_words=[]
-            if re.search(r'(\.pdf(?:[?#]|$)|/pdf(?:[/;?#]|$)|/download|/get\.php)',href,re.I):self.links.append(href)
+            if re.search(r'(\.pdf(?:[?#]|$)|/pdf(?:[/;?#]|$)|/(?:slow_|fast_)?download|/dl/|/get\.php)',href,re.I):self.links.append(href)
             elif re.search(r'/(?:md5|book|publication|article|scimag)/|ads\.php',href,re.I):self.pages.append(href)
     def handle_data(self,data):
         self.words.append(data)
