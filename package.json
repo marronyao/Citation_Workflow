@@ -8,7 +8,7 @@
     "cloud:types": "wrangler types --config cloud/wrangler.jsonc cloud/worker-configuration.d.ts",
     "cloud:deploy": "wrangler deploy --config cloud/wrangler.jsonc",
     "build": "esbuild citation-entry.js --bundle --minify --outfile=vendor/citation.js",
-    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs && node tests/test_reference_types.cjs && node --test tests/test_cloud.mjs tests/test_browser_downloads.cjs tests/test_batch_progress.cjs"
+    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs && node tests/test_reference_types.cjs && node --test tests/test_cloud.mjs tests/test_browser_downloads.cjs tests/test_batch_progress.cjs tests/test_third_party.mjs"
   },
   "keywords": [],
   "author": "",

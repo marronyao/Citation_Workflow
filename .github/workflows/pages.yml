@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: 'Publish the current version as a GitHub Release after deployment'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -61,7 +66,7 @@ jobs:
 
   release:
     needs: deploy
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_release
     runs-on: ubuntu-latest
     permissions:
       contents: write

@@ -17,7 +17,7 @@ Your browser controls the save location and duplicate filenames. Enable its “A
 
 - Cloud metadata from Crossref, DataCite and original repositories; no localhost connection.
 - Journal articles, preprints and individual PMLR, NeurIPS, CVF and ACL conference-paper pages. Explicit arXiv versions are preserved.
-- Verified PDF retrieval from original repositories, PMC and supported open-access publishers. Source history and official access links explain failed downloads.
+- Verified PDF retrieval from original repositories, PMC and supported publishers, with DOI-based Sci-Hub, Z-Library and Library Genesis fallback requests. Source history and direct source links explain failed downloads.
 - APA 7, Vancouver, Harvard, BibTeX, RIS / EndNote, and a custom format inferred from a reference example. Editable references, titles and APA proper nouns.
 - Live batch progress with the current identifier, lookup/retrieval stage, elapsed time, PDF transfer size and ZIP packing status.
 - PDFs named after the article title; ZIP downloads with a report. Invalid or unavailable papers do not stop other items.
@@ -25,9 +25,9 @@ Your browser controls the save location and duplicate filenames. Enable its “A
 
 Limits: **20 papers per batch**, **80 MB per PDF**, **100 MB per ZIP**. Large batches use browser memory; download large PDFs individually. An internet connection and an available cloud service are required. Subscription access, verification pages and sources blocking cloud traffic may prevent a download; use the official article link for institutional access. References remain available without a PDF.
 
-Cloud retrieval uses original repositories, PMC and an explicit supported publisher domain list. The legacy helper’s headless-browser mirror discovery and Sci-Hub / ResearchGate / Z-Library / Library Genesis / Anna’s Archive automation are **not part of the cloud service**. The UI reports only sources actually checked. PubMed is not queried.
+Cloud retrieval uses original repositories, PMC and an explicit supported publisher domain list first, then configured Sci-Hub, Z-Library and Library Genesis public endpoints when a DOI is available. The adapters request matching records and verify PDF bytes before offering a cloud download. Search history distinguishes actual attempts, no match, timeouts, access denial, login and manual verification. Failed sources have direct browser links. No accounts or browser cookies are sent to the cloud service; automated challenge solving and headless mirror discovery are not included. Reachability and downloads depend on each source and are not guaranteed. ResearchGate and Anna’s Archive are not connected. PubMed is not queried.
 
-Failed searches list unconnected services as **Not searched**, separately from publisher access errors or unavailable PDFs. Official Elsevier HTTP/HTML resolver redirects are supported with bounded, validated redirects. See [source retrieval diagnostics](docs/source-retrieval.md).
+Failed searches list unconnected services as **Not searched**, separately from configured source failures or unavailable PDFs. Official Elsevier HTTP/HTML resolver redirects are supported with bounded, validated redirects. See [source retrieval diagnostics](docs/source-retrieval.md).
 
 ## Compatibility and validation
 
@@ -65,7 +65,7 @@ npm run cloud:deploy
 
 Use a cryptographically random secret of at least 32 bytes. Keep it in Cloudflare secret storage, never in Git. Redeploys preserve the existing secret. Source bindings are declared in `cloud/wrangler.jsonc`. The initial v0.4.0 backend was deployed through the authenticated Cloudflare connector with this configuration.
 
-GitHub Actions checks Windows and Linux, publishes frontend files to Pages, then creates a Release using `package.json` and `docs/releases/vX.Y.Z.md`. A separate macOS workflow checks automated compatibility. **Worker updates require separate deployment**; the Pages workflow has no Cloudflare credentials.
+GitHub Actions checks Windows and Linux and publishes frontend files to Pages on pushes to `main`. Releases are opt-in: manually run the Pages workflow with **publish_release** enabled to publish using `package.json` and `docs/releases/vX.Y.Z.md`; the default is off. A separate macOS workflow checks automated compatibility. **Worker updates require separate deployment**; the Pages workflow has no Cloudflare credentials.
 
 The Python companion (`server.py`, `paper_metadata.py`, `fulltext_sources.py`, `start.bat`, `start.sh`) remains as legacy developer/reference code. It is not shipped to Pages, called by the v0.4.0 frontend, or required on a new device. Historical notes describe earlier local versions.
 

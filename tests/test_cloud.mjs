@@ -60,9 +60,23 @@ test('publisher HTML redirects cannot escape the source allowlist',async()=>{
   assert(data.attempts.some(s=>s.includes('Unsupported source URL (host: 127.0.0.1)')));
   assert(!visited.some(url=>url.includes('127.0.0.1')));
 });
-test('verification pages and unconnected sources are reported without claiming they were searched',async()=>{
+test('verification pages, connected source attempts and unconnected sources are distinct',async()=>{
   const {data}=await retrievalFixture(()=>new Response('<title>Just a moment</title><p>Verify you are human</p>'));
   assert.equal(data.ok,false);
   assert(data.attempts.some(s=>s.includes('verification page')));
-  assert(data.attempts.some(s=>s.startsWith('Not searched: Sci-Hub')&&s.includes('Z-Library')));
+  assert(data.attempts.some(s=>s.startsWith('Not searched: ResearchGate')));
+  assert.deepEqual(data.source_results.map(s=>s.name),['Sci-Hub','Z-Library','Library Genesis']);
+  assert(data.attempts.some(s=>s.startsWith('Sci-Hub:')));
+});
+
+test('third-party matching record can return a signed cloud PDF download',async()=>{
+  const {data}=await retrievalFixture(url=>{
+    if(url.startsWith('https://linkinghub.elsevier.com/'))return new Response('No PDF');
+    if(url==='https://sci-hub.ru/10.1016/j.cell.2012.11.001')return new Response('<p>10.1016/j.cell.2012.11.001</p><iframe src="/paper.pdf"></iframe>');
+    if(url==='https://sci-hub.ru/paper.pdf')return new Response('%PDF-1.7\nTest');
+    throw Error('Unexpected URL '+url);
+  });
+  assert.equal(data.ok,true);assert.equal(data.source,'Sci-Hub');
+  const ticket=new URL(data.download_url).searchParams.get('ticket');
+  assert.equal((await verify(ticket,'test','pdf')).url,'https://sci-hub.ru/paper.pdf');
 });
