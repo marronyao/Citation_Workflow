@@ -241,7 +241,7 @@ $('connectorHelpOpen').onclick=()=>$('connectorHelp').showModal();
 $('batchConnectorHelp').onclick=()=>$('connectorHelp').showModal();
 $('connectorHelpClose').onclick=()=>$('connectorHelp').close();
 $('connectorHelpFromSources').onclick=()=>$('connectorHelp').showModal();
-window.addEventListener('citation-connector-ready',()=>{$('connectorState').textContent='Connector connected';$('connectorState').classList.add('is-connected');if(activeRecovery&&!activeRecovery.cancel)offerPublishers(activeRecovery.result,activeRecovery);});
+window.addEventListener('citation-connector-ready',()=>{$('connectorState').textContent='Connector connected';$('connectorState').classList.add('is-connected');$('connectorHelpOpen').textContent='Connector re-setup';if(activeRecovery&&!activeRecovery.cancel)offerPublishers(activeRecovery.result,activeRecovery);});
 $('articleTitle').addEventListener('input',renderCitation);
 $('style').onchange=()=>{
   updateCustomVisibility();
