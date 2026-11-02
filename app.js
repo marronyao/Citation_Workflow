@@ -1,13 +1,9 @@
-/* Static frontend; downloads are delegated to the loopback-only companion. */
+/* Static frontend backed by the public cloud API. */
 const $ = id => document.getElementById(id);
-const API = 'http://127.0.0.1:8765';
-let token = '', record = null, busy = false, pendingDownload = false;
-let config = {folder:'', autoDownload:true, system:'windows', folders:{}};
-try { Object.assign(config, JSON.parse(localStorage.getItem('citation-settings') || '{}')); } catch {}
-if(!['windows','macos','linux'].includes(config.system)) config.system='windows';
-if(!config.folders || typeof config.folders!=='object' || Array.isArray(config.folders)) config.folders={};
-config.folders[config.system]=config.folder;
-const SYSTEMS={windows:{name:'Windows',example:'D:/Papers'},macos:{name:'macOS',example:'/Users/yourname/Downloads'},linux:{name:'Linux',example:'/home/yourname/Downloads'}};
+const API = 'https://citation-workflow-api.marronyao.workers.dev';
+let record=null, busy=false;
+let config={autoDownload:false};
+try { const saved=JSON.parse(localStorage.getItem('citation-cloud-settings')||'{}');config.autoDownload=saved.autoDownload===true; } catch {}
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function normalizeDOI(value) {
   let s=value.trim().replace(/^["']+|["']+$/g,'').trim();
@@ -20,17 +16,6 @@ function normalizeDOI(value) {
   }
   s=s.replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)/i,'');
   if(!/^10\.\d{4,9}\/[^\s<>"']+$/i.test(s)) throw Error('Enter a DOI, arXiv ID, preprint link or supported conference paper link.');
-  return s;
-}
-function normalizeFolder(s, system=config.system) {
-  s = s.trim().replace(/^["']+|["']+$/g,'').trim();
-  if(!SYSTEMS[system]) throw Error('Choose Windows, macOS or Linux.');
-  if(system!=='windows') {
-    if(/[\x00-\x1f]/.test(s) || !(s.startsWith('/') || s==='~' || s.startsWith('~/'))) throw Error('Enter an absolute '+SYSTEMS[system].name+' path, e.g. '+SYSTEMS[system].example+', or ~/Downloads.');
-    return s;
-  }
-  s=s.replaceAll('/','\\');
-  if (!/^[a-z]:\\/i.test(s) || /[<>"|?*\x00-\x1f]/.test(s) || s.slice(2).includes(':')) throw Error('Enter an absolute Windows path, e.g. D:\\Papers.');
   return s;
 }
 function sentenceCase(title, protectedText='') {
@@ -61,23 +46,21 @@ function journalCase(title) {
   });
 }
 function notice(message, error=false) { $('notice').textContent=message; $('notice').hidden=!message; $('notice').classList.toggle('error',error); }
-function lock(value) { busy=value; for(const id of ['search','download','doi','batchOpen','settingsOpen','downloadSystem']) $(id).disabled=value; }
-async function connect() {
-  try {
-    const r = await fetch(API+'/api/health',{signal:AbortSignal.timeout(3500)});
-    if (!r.ok) throw Error();
-    token=(await r.json()).token;
-    return true;
-  } catch {
-    token=''; return false;
-  }
-}
+function lock(value) { busy=value; for(const id of ['search','download','doi','batchOpen','settingsOpen']) $(id).disabled=value; }
 async function api(route, payload) {
-  if (!token && !await connect()) throw Error('Start the local companion: start.bat on Windows, or sh start.sh on macOS / Linux. Then open http://127.0.0.1:8765. If it is already running, check that your browser allows local network access.');
-  const response=await fetch(API+'/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Citation-Token':token},body:JSON.stringify(payload),signal:AbortSignal.timeout(600000)});
-  const data=await response.json();
-  if(!response.ok && data.error==='Unknown API') throw Error('Update the local companion from GitHub, close the old companion and restart start.bat, then refresh this page.');
-  if (!response.ok) throw Error(data.error || 'The local assistant could not complete the request.'); return data;
+  let response;
+  try {response=await fetch(API+'/api/'+route,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload),signal:AbortSignal.timeout(180000)});}
+  catch {throw Error('The cloud service could not be reached. Check your connection and try again.');}
+  let data;try {data=await response.json();}catch {throw Error('The cloud service returned an unexpected response. Please try again.');}
+  if(!response.ok)throw Error(data.error||'The cloud service could not complete the request.');return data;
+}
+async function fetchPaperPDF(paper) {
+  const result=await api('download',{key:paper.key});
+  if(!result.ok) return {result};
+  const downloadURL=new URL(result.download_url);
+  if(downloadURL.origin!==API || downloadURL.pathname!=='/api/pdf')throw Error('Invalid cloud download URL.');
+  const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}));
+  return {result,blob};
 }
 function link(label,url,parent) {
   if (!/^https?:\/\//i.test(url)) return;
@@ -150,49 +133,20 @@ function displayRecord() {
   renderCitation();
 }
 function showSettings() {
-  $('folder').value=config.folder; $('autoDownload').checked=config.autoDownload;
-  $('folderSystem').value=config.system;
-  $('settingsError').textContent=''; $('settings').showModal();
+  $('autoDownload').checked=config.autoDownload;$('settings').showModal();
 }
-function persistSettings() {
-  config.folders[config.system]=config.folder;
-  try {localStorage.setItem('citation-settings',JSON.stringify(config));} catch {}
-}
-function updateFolder() {
-  const system=SYSTEMS[config.system];
-  $('folderLabel').textContent=config.folder || 'No '+system.name+' folder selected';
-  for(const id of ['downloadSystem','folderSystem','batchSystem']) $(id).value=config.system;
-  for(const id of ['folder','batchFolder']) $(id).placeholder='e.g. '+system.example;
-  $('folderHelp').textContent=config.system==='windows'?'Choose an existing Windows folder. Forward slashes, backslashes and surrounding quotation marks are accepted.':'Choose an existing '+system.name+' folder. Use an absolute path or ~/Downloads for your home folder.';
-}
-function changeSystem(system) {
-  if(!SYSTEMS[system]) return;
-  if(!$('batchWorkspace').hidden) {
-    try {config.folder=normalizeFolder($('batchFolder').value);} catch {}
-  }
-  config.folders[config.system]=config.folder;
-  config.system=system; config.folder=config.folders[system] || '';
-  persistSettings();updateFolder();
-  $('folder').value=$('batchFolder').value=config.folder;
-  $('settingsError').textContent=$('batchStatus').textContent='';
-  refreshBatchActions();
-}
-for(const id of ['downloadSystem','folderSystem','batchSystem']) $(id).onchange=event=>changeSystem(event.target.value);
 async function doDownload() {
-  if(!record || busy) return;
-  if(!config.folder) { pendingDownload=true; showSettings(); return; }
-  lock(true); $('downloadStatus').textContent='Finding full text and downloading the PDF…'; notice('Checking PDF sources in order. Some websites may take a moment to respond.');
+  if(!record || busy)return;
+  lock(true);$('downloadStatus').textContent='Downloading PDF from the cloud…';notice('Preparing your browser download…');
   try {
-    const result=await api('download',{key:record.key,doi:record.doi,identifier:record.identifier,folder:config.folder,system:config.system});
-    showAttempts(result);
-    if(result.ok) {
-      $('downloadStatus').textContent=`PDF saved · ${(result.bytes/1024/1024).toFixed(2)} MB`;
-      $('sourceStatus').textContent='Full text retrieved from '+result.source+(result.version_note?' · '+result.version_note:''); notice([...record.warnings,'Saved to: '+result.path].join('\n'));
-    } else {
-      $('downloadStatus').textContent='Database search finished; publisher options available'; notice('Your reference is ready, but the PDF could not be downloaded. See the source search history for details.');
-      offerPublishers(result);
-    }
-  } catch(e) { $('downloadStatus').textContent='Download failed'; notice(e.message,true); }
+    const {result,blob}=await fetchPaperPDF(record);showAttempts(result);
+    if(blob) {
+      BrowserDownloads.save(blob,result.filename);
+      $('downloadStatus').textContent=`Download started · ${(blob.size/1024/1024).toFixed(2)} MB`;
+      $('sourceStatus').textContent='Full text retrieved from '+result.source+(result.version_note?' · '+result.version_note:'');
+      notice([...record.warnings,'Your browser controls the save location. Check its downloads list.'].join('\n'));
+    } else {$('downloadStatus').textContent='No accessible PDF retrieved';notice('Your reference is ready. Open the official article for other access options.');offerPublishers(result);}
+  }catch(e){$('downloadStatus').textContent='Download failed';notice(e.message,true);}
   finally {lock(false);}
 }
 function showAttempts(result) {
@@ -225,17 +179,11 @@ $('lookupForm').addEventListener('submit',async e=>{
 $('example').onclick=()=>{$('doi').value='10.1371/journal.pbio.3000117'; $('doi').focus();};
 $('download').onclick=doDownload;
 $('settingsOpen').onclick=showSettings;
-$('settingsCancel').onclick=()=>{pendingDownload=false;$('settings').close();};
-$('settings').addEventListener('cancel',()=>{pendingDownload=false;});
+$('settingsCancel').onclick=()=>$('settings').close();
 $('settingsForm').onsubmit=e=>{
-  e.preventDefault();
-  try {
-    const folder=normalizeFolder($('folder').value);
-    config.folder=folder;config.autoDownload=$('autoDownload').checked;
-    persistSettings();
-    updateFolder(); $('settings').close();
-    if(pendingDownload){pendingDownload=false;doDownload();}
-  } catch(e) { $('settingsError').textContent=e.message; }
+  e.preventDefault();config.autoDownload=$('autoDownload').checked;
+  try {localStorage.setItem('citation-cloud-settings',JSON.stringify(config));}catch{}
+  $('settings').close();
 };
 $('loginClose').onclick=()=>$('loginDialog').close();
 $('articleTitle').addEventListener('input',renderCitation);
@@ -251,63 +199,36 @@ $('copy').onclick=async()=>{
   try {await navigator.clipboard.writeText($('citationText').value);$('copyStatus').textContent='Plain text copied';}
   catch {$('citationText').focus();$('citationText').select();$('copyStatus').textContent='Press Ctrl+C to copy the selected text';}
 };
-async function browseFolder(input, button, status) {
-  button.disabled=true; const label=button.textContent,system=config.system; button.textContent='Choose in '+SYSTEMS[system].name+'…'; status.textContent='';
-  const selectors=['downloadSystem','folderSystem','batchSystem'];
-  const previous=selectors.map(id=>$(id).disabled);selectors.forEach(id=>$(id).disabled=true);
-  try {
-    const result=await api('folder',{initial:input.value,system});
-    if(result.folder) { input.value=result.folder; input.dispatchEvent(new Event('change')); }
-  } catch(e) { status.textContent=e.message; }
-  finally {button.disabled=false;button.textContent=label;selectors.forEach((id,i)=>$(id).disabled=previous[i]);}
-}
-$('folderBrowse').onclick=()=>browseFolder($('folder'),$('folderBrowse'),$('settingsError'));
-$('batchBrowse').onclick=()=>browseFolder($('batchFolder'),$('batchBrowse'),$('batchStatus'));
-
 let batchItems=[], batchBusy=false;
 function openBatch(show) {
   if(busy || batchBusy) return;
   $('singleWorkspace').hidden=show; $('batchWorkspace').hidden=!show;
   $('batchOpen').hidden=show;
-  if(show) { $('batchFolder').value=config.folder; refreshBatchActions(); $('batchFolder').focus(); }
+  if(show) {refreshBatchActions();$('batchDOIs').focus();}
   else $('doi').focus();
 }
 $('batchOpen').onclick=()=>openBatch(true);
 $('batchBack').onclick=()=>openBatch(false);
 function batchLock(value) {
   batchBusy=value;
-  for(const id of ['batchFind','batchFolder','batchBrowse','batchStyle','batchDOIs','batchBack','batchCustomExample','batchSystem','downloadSystem']) $(id).disabled=value;
+  for(const id of ['batchFind','batchStyle','batchDOIs','batchBack','batchCustomExample','settingsOpen']) $(id).disabled=value;
   refreshBatchActions();
 }
 function refreshBatchActions() {
-  const folder=$('batchFolder').value.trim();
-  const destination=config.system+'\n'+folder;
-  for(const item of batchItems) if(item.downloadButton) {
-    item.downloadButton.disabled=batchBusy || !item.paper || item.savedFolder===destination;
-    item.downloadButton.textContent=item.savedFolder===destination?'Downloaded':'Download PDF';
-  }
-  $('batchDownloadAll').disabled=batchBusy || !batchItems.some(item=>item.paper && item.savedFolder!==destination);
-  const saved=batchItems.filter(item=>item.savedFolder===destination).length;
-  $('batchSummary').textContent=`${saved} of ${batchItems.length} PDFs saved`;
+  for(const item of batchItems)if(item.downloadButton)item.downloadButton.disabled=batchBusy||!item.paper;
+  $('batchDownloadAll').disabled=batchBusy||!batchItems.some(item=>item.paper);
+  $('batchSummary').textContent=`${batchItems.filter(item=>item.downloaded).length} of ${batchItems.length} PDFs prepared for download`;
 }
-function saveBatchFolder() {
-  const folder=normalizeFolder($('batchFolder').value);
-  $('batchFolder').value=folder; config.folder=folder; updateFolder();
-  persistSettings();
-  refreshBatchActions();return folder;
-}
-$('batchFolder').onchange=()=>{try {saveBatchFolder();} catch(e) {$('batchStatus').textContent=e.message;}};
 function createBatchRow(doi) {
-  const item={doi,paper:null,savedFolder:''}, row=document.createElement('tr');
+  const item={doi,paper:null,downloaded:false}, row=document.createElement('tr');
   const cells=Array.from({length:4},()=>{const cell=document.createElement('td');row.append(cell);return cell;});
   cells[0].textContent=doi;cells[1].textContent='Waiting…';
   item.titleCell=cells[1];item.pdfCell=cells[2];item.citationCell=cells[3];
   const downloadButton=document.createElement('button');downloadButton.type='button';downloadButton.className='secondary';downloadButton.textContent='Download PDF';downloadButton.disabled=true;
   downloadButton.onclick=async()=>{
     if(batchBusy) return;
-    let folder;try {folder=saveBatchFolder();} catch(e) {$('batchStatus').textContent=e.message;return;}
     batchLock(true);
-    try {await downloadBatchItem(item,folder);} finally {
+    try {await downloadBatchItem(item);} finally {
       batchLock(false); $('batchStatus').textContent=$('batchSummary').textContent+'. Failed papers can be retried individually.';
     }
   };
@@ -337,7 +258,7 @@ $('batchStyle').onchange=()=>{updateCustomVisibility();for(const item of batchIt
 $('batchForm').onsubmit=async e=>{
   e.preventDefault();if(batchBusy) return;
   let dois;
-  try {saveBatchFolder();dois=$('batchDOIs').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);if(!dois.length) throw Error('Enter at least one DOI, one per line.');}
+  try {dois=$('batchDOIs').value.split(/\r?\n/).map(s=>s.trim()).filter(Boolean);if(!dois.length) throw Error('Enter at least one DOI, one per line.');if(dois.length>20)throw Error('Use up to 20 papers per batch.');}
   catch(e) {$('batchStatus').textContent=e.message;return;}
   $('batchRows').replaceChildren();batchItems=dois.map(createBatchRow);$('batchResults').hidden=false;batchLock(true);
   let found=0;
@@ -364,31 +285,39 @@ $('batchForm').onsubmit=async e=>{
     $('batchStatus').textContent=`Found ${found} of ${batchItems.length} papers. Choose individual PDFs or download all below.`;
   } finally {batchLock(false);}
 };
-async function downloadBatchItem(item,folder) {
-  item.status.textContent='Searching sources and saving PDF…';item.links.replaceChildren();
+async function downloadBatchItem(item, forZip=false) {
+  item.status.textContent='Downloading PDF…';item.links.replaceChildren();
   try {
-    const result=await api('download',{key:item.paper.key,doi:item.paper.doi,identifier:item.paper.identifier,folder,system:config.system});
-    if(result.ok) {item.savedFolder=config.system+'\n'+folder;item.status.textContent='Saved to '+result.path;}
-    else {
-      item.status.textContent='PDF unavailable. Choose a publisher link or retry.';
-      (result.publishers||[{name:'Open publisher',url:result.login}]).forEach(choice=>link(choice.name,choice.url,item.links));
+    const {result,blob}=await fetchPaperPDF(item.paper);
+    if(blob) {
+      if(!forZip){BrowserDownloads.save(blob,result.filename);item.downloaded=true;}
+      item.status.textContent=forZip?'PDF ready for ZIP':'Browser download started';
+      return {name:result.filename,blob,item};
     }
-    item.status.title=(result.attempts||[]).join('\n');
-  } catch(e) {item.status.textContent='Download failed: '+e.message;}
+    item.status.textContent='PDF unavailable. Open the official article or retry.';
+    (result.publishers||[]).forEach(choice=>link(choice.name,choice.url,item.links));
+  }catch(e){item.status.textContent='Download failed: '+e.message;}
+  return null;
 }
 $('batchDownloadAll').onclick=async()=>{
-  if(batchBusy) return;
-  let folder;try {folder=saveBatchFolder();} catch(e) {$('batchStatus').textContent=e.message;return;}
-  const destination=config.system+'\n'+folder;
-  const pending=batchItems.filter(item=>item.paper && item.savedFolder!==destination);batchLock(true);
+  if(batchBusy)return;
+  const pending=batchItems.filter(item=>item.paper),files=[];let total=0;
+  batchLock(true);
   try {
-    for(const [index,item] of pending.entries()) {
-      $('batchStatus').textContent=`Downloading PDF ${index+1} of ${pending.length}…`;
-      await downloadBatchItem(item,folder);refreshBatchActions();
+    for(const [index,item]of pending.entries()) {
+      $('batchStatus').textContent=`Preparing PDF ${index+1} of ${pending.length} for ZIP…`;
+      const file=await downloadBatchItem(item,true);
+      if(file){if(total+file.blob.size>BrowserDownloads.MAX_ZIP-65536){item.status.textContent='Skipped: ZIP limit is 100 MB. Download this PDF individually.';}else{files.push(file);total+=file.blob.size;}}
     }
-    const saved=batchItems.filter(item=>item.savedFolder===destination).length;
-    $('batchStatus').textContent=`Finished: ${saved} PDFs saved. Any failed papers can be retried individually.`;
-  } finally {batchLock(false);}
+    const report=batchItems.map(item=>item.doi+'\n'+item.status.textContent).join('\n\n');
+    if(files.length) {
+      const zip=await BrowserDownloads.zip([...files,{name:'download-report.txt',blob:new Blob([report])}]);
+      BrowserDownloads.save(zip,'Citation-Workflow-'+new Date().toISOString().slice(0,10)+'.zip');
+      for(const file of files){file.item.downloaded=true;file.item.status.textContent='Included in ZIP download';}
+    }
+    $('batchStatus').textContent=files.length?`ZIP download started: ${files.length} PDFs. ${batchItems.length-files.length} unavailable or skipped. Check your browser downloads.`:'No PDFs could be retrieved. See each paper for details.';
+  }catch(e){$('batchStatus').textContent=e.message;}
+  finally{batchLock(false);}
 };
 function updateCustomVisibility() {
   $('singleCustom').hidden=$('style').value!=='custom';
@@ -434,4 +363,4 @@ try {
     customStatus('Detected: '+customDefinition.summary);
   }
 } catch {}
-updateCustomVisibility();updateFolder(); connect();
+updateCustomVisibility();

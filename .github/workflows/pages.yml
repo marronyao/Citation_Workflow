@@ -47,7 +47,7 @@ jobs:
       - name: Prepare static site
         run: |
           mkdir -p _site/vendor
-          cp index.html styles.css app.js custom-style.js favicon.svg _site/
+          cp index.html styles.css app.js custom-style.js browser-downloads.js favicon.svg _site/
           cp vendor/citation.js _site/vendor/
           cp -r vendor/licenses _site/vendor/
           cp THIRD_PARTY_NOTICES.md _site/
@@ -84,4 +84,3 @@ jobs:
           title="${title#\# }"
           tail -n +3 "$notes" > "$RUNNER_TEMP/release-notes.md"
           gh release create "$tag" --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" --title "$title" --notes-file "$RUNNER_TEMP/release-notes.md" --latest
-

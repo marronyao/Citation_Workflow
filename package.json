@@ -1,11 +1,14 @@
 {
   "name": "citation-workflow",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Cross-platform scholarly full-text search, PDF download and citation workflow",
   "main": "index.js",
   "scripts": {
+    "cloud:check": "wrangler deploy --config cloud/wrangler.jsonc --dry-run",
+    "cloud:types": "wrangler types --config cloud/wrangler.jsonc cloud/worker-configuration.d.ts",
+    "cloud:deploy": "wrangler deploy --config cloud/wrangler.jsonc",
     "build": "esbuild citation-entry.js --bundle --minify --outfile=vendor/citation.js",
-    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs && node tests/test_reference_types.cjs"
+    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs && node tests/test_reference_types.cjs && node --test tests/test_cloud.mjs tests/test_browser_downloads.cjs"
   },
   "keywords": [],
   "author": "",
@@ -17,5 +20,8 @@
     "@citation-js/plugin-csl": "^0.9.0",
     "esbuild": "^0.28.2"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "wrangler": "^4.156.2"
+  }
 }

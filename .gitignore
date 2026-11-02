@@ -4,3 +4,8 @@ __pycache__/
 test-downloads/
 .qa/
 _site/
+
+.wrangler/
+.dev.vars*
+.env*
+cloud/worker-configuration.d.ts
