@@ -46,7 +46,7 @@ If your browser asks for permission to connect to the local network, allow it fo
 
 ### 3. Find and save a paper
 
-1. Select **Set download folder** above the DOI search and enter an existing Windows folder.
+1. Select **Set download folder** above the DOI search. Enter an existing Windows folder, or select **Browse folders** to open the native Windows folder picker.
 2. Enter a DOI or DOI link and select **Find paper**.
 3. Review the paper details and reference. Downloads start automatically by default; turn this off in settings if you prefer to select **Download PDF** yourself.
 4. Choose a reference style, check the title’s capitalisation and select **Copy citation**.
@@ -60,6 +60,14 @@ D:/Papers
 ```
 
 Only absolute Windows drive paths are supported. The folder must already exist; UNC network paths are not currently supported.
+
+## Batch downloads
+
+Select **Batch download** in the top-right corner. Choose a working folder (type its path or use **Browse folders**), select a reference style, and paste one DOI or DOI link per line. Select **Find papers** to build a results table. Long titles show their first nine words; hover over a title to see it in full.
+
+Each row provides **Download PDF** and **Copy citation** actions. **Download all PDFs** saves papers sequentially to the selected folder and skips those already saved there during this batch. A failed lookup or download does not stop the remaining papers; failed downloads can be retried or opened through publisher options. Changing the reference style regenerates the row citations. Batch mode does not start downloads until you select a download action.
+
+The folder picker runs through the local companion and requires the standard Python Tkinter component. If it is unavailable, you can still type the folder path. Download progress and results remain on the page while it is open.
 
 ## Full-text access
 

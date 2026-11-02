@@ -4,9 +4,33 @@ from unittest.mock import patch
 import server
 from pathlib import Path
 import tempfile
+import subprocess
 
 
 class CoreTests(unittest.TestCase):
+    def test_folder_picker_selects_existing_folder_and_cancellation(self):
+        selected = subprocess.CompletedProcess([], 0, json.dumps({'folder':'D:/Research papers'}))
+        cancelled = subprocess.CompletedProcess([], 0, '{"folder":""}')
+        with patch.object(server.subprocess, 'run', side_effect=[selected, cancelled]) as run, patch.object(server.Path, 'is_dir', return_value=True):
+            self.assertEqual(server.choose_folder('D:/Papers'), {'folder':'D:\\Research papers'})
+            self.assertEqual(server.choose_folder(), {'folder':''})
+        self.assertEqual(run.call_args_list[0].args[0][-1], 'D:/Papers')
+        self.assertFalse(server.PICKER_LOCK.locked())
+
+    def test_folder_picker_failure_releases_lock(self):
+        with patch.object(server.subprocess, 'run', side_effect=subprocess.TimeoutExpired('picker', 180)):
+            with self.assertRaisesRegex(ValueError, 'timed out'):
+                server.choose_folder()
+        self.assertFalse(server.PICKER_LOCK.locked())
+
+    def test_expired_batch_record_is_looked_up_again(self):
+        with tempfile.TemporaryDirectory(dir=server.ROOT) as folder:
+            record={'sources':[{'name':'PubMed Central','url':'https://example.org'}], 'doi':'10.1234/refresh','csl':{'title':'Refreshed paper'}}
+            with patch.object(server, 'lookup', return_value=record) as lookup, patch.object(server, 'find_pdf', return_value=(b'%PDF-test', 'https://example.org/p.pdf')):
+                result=server.download({'key':'expired-key', 'doi':'10.1234/refresh', 'folder':folder})
+            lookup.assert_called_once_with('10.1234/refresh')
+            self.assertTrue(result['ok']); self.assertTrue(Path(result['path']).is_file())
+
     def test_doi_and_windows_paths(self):
         for value in ('10.1234/ABC.1', ' https://doi.org/10.1234/ABC.1 ', 'doi:10.1234/ABC.1', 'https://dx.doi.org/10.1234%2FABC.1'):
             self.assertEqual(server.doi_normalize(value), '10.1234/ABC.1')

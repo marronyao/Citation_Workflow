@@ -10,6 +10,7 @@ import re
 import secrets
 import subprocess
 import socket
+import sys
 import tempfile
 import threading
 import time
@@ -26,6 +27,41 @@ CACHE = {}
 LAST_NCBI = 0
 NCBI_LOCK = threading.Lock()
 ALLOWED_ORIGIN = None
+PICKER_LOCK = threading.Lock()
+
+
+def choose_folder(initial=''):
+    """Run Tk on its own main thread/process so HTTP worker threads stay safe."""
+    if not PICKER_LOCK.acquire(blocking=False):
+        raise ValueError('A folder selection window is already open.')
+    script = '''import json, sys, tkinter as tk
+from tkinter import filedialog
+root = tk.Tk()
+root.withdraw()
+root.attributes('-topmost', True)
+try:
+    folder = filedialog.askdirectory(parent=root, title='Choose a folder for your papers', initialdir=sys.argv[1] or None, mustexist=True)
+    print(json.dumps({'folder': folder}))
+finally:
+    root.destroy()
+'''
+    try:
+        result = subprocess.run([sys.executable, '-c', script, str(initial)],
+                                capture_output=True, text=True, encoding='utf-8', timeout=180,
+                                creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0),
+                                env={**os.environ, 'PYTHONIOENCODING':'utf-8'})
+        if result.returncode:
+            raise ValueError('The folder picker could not open. Enter the folder path manually.')
+        selected = json.loads(result.stdout)['folder']
+        if selected:
+            selected = windows_folder(selected)
+            if not Path(selected).is_dir():
+                raise ValueError('The selected folder no longer exists.')
+        return {'folder':selected}
+    except subprocess.TimeoutExpired:
+        raise ValueError('Folder selection timed out. Try again or enter the path manually.')
+    finally:
+        PICKER_LOCK.release()
 
 
 def doi_normalize(value):
@@ -271,6 +307,8 @@ def publisher_choices(record):
 
 def download(payload):
     record = CACHE.get(payload.get('key'))
+    if not record and payload.get('doi'):
+        record = lookup(doi_normalize(payload['doi']))
     if not record:
         raise ValueError('The paper session has expired. Find the paper again to continue.')
     folder = windows_folder(payload.get('folder',''))
@@ -353,6 +391,8 @@ class Handler(SimpleHTTPRequestHandler):
                 result = lookup(doi_normalize(payload.get('doi','')))
             elif self.path == '/api/download':
                 result = download(payload)
+            elif self.path == '/api/folder':
+                result = choose_folder(payload.get('initial',''))
             else:
                 self.reply({'error':'Unknown API'},404); return
             self.reply(result)
