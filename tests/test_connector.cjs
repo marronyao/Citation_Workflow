@@ -68,3 +68,13 @@ test('page client validates ordered PDF chunks and rejects incomplete transfers'
   const broken=c.api.download({url:'https://www.cell.com/article',paper:{csl:{title:'Test'}}}),badId=c.posted.at(-1).id;
   const rejection=assert.rejects(broken.promise,/Incomplete/);await c.send({id:badId,type:'done',size:20});await rejection;
 });
+test('ordinary cloud PDFs work without a connector or progress callback, and browser PDFs are reused',async()=>{
+  const source=fs.readFileSync('app.js','utf8'),part=source.slice(source.indexOf('const browserPDFs='),source.indexOf('function link('));let calls=0;
+  const context=vm.createContext({URL,AbortSignal,BrowserDownloads:require('../browser-downloads.js'),api:async()=>{calls++;return {ok:true,download_url:'https://citation-workflow-api.marronyao.workers.dev/api/pdf'};},fetch:async()=>new Response('%PDF-1.7\ncloud download')});
+  vm.runInContext("const API='https://citation-workflow-api.marronyao.workers.dev';"+part,context);
+  const paper={doi:'10.1234/test',identifier:'10.1234/test',csl:{title:'Test paper'}};
+  assert.equal(await (await context.fetchPaperPDF(paper,null,true)).blob.text(),'%PDF-1.7\ncloud download');
+  assert.equal(await (await context.fetchPaperPDF(paper,undefined,true)).blob.text(),'%PDF-1.7\ncloud download');
+  context.rememberBrowserPDF(paper,new Blob(['%PDF-1.7\nbrowser download']));
+  assert.equal(await (await context.fetchPaperPDF(paper)).blob.text(),'%PDF-1.7\nbrowser download');assert.equal(calls,2);
+});

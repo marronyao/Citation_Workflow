@@ -71,7 +71,7 @@ async function fetchPaperPDF(paper,onProgress,interactive=false) {
   }
   const downloadURL=new URL(result.download_url);
   if(downloadURL.origin!==API || downloadURL.pathname!=='/api/pdf')throw Error('Invalid cloud download URL.');
-  const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}),onProgress);
+  const blob=await BrowserDownloads.readPDF(await fetch(downloadURL,{signal:AbortSignal.timeout(180000)}),typeof onProgress==='function'?onProgress:undefined);
   return {result,blob};
 }
 function link(label,url,parent) {
@@ -151,7 +151,7 @@ async function doDownload() {
   if(!record || busy)return;
   lock(true);$('downloadStatus').textContent='Downloading PDF from the cloud…';notice('Preparing your browser download…');
   try {
-    const {result,blob}=await fetchPaperPDF(record,null,true);showAttempts(result);
+    const {result,blob}=await fetchPaperPDF(record,undefined,true);showAttempts(result);
     if(blob) {
       BrowserDownloads.save(blob,result.filename);
       $('downloadStatus').textContent=`Download started · ${(blob.size/1024/1024).toFixed(2)} MB`;
