@@ -124,6 +124,6 @@ The deployment workflow checks the project on Windows and publishes only fronten
 - [DOI content negotiation](https://www.crossref.org/documentation/retrieve-metadata/content-negotiation/) for bibliographic metadata.
 - [Citation.js](https://citation.js.org/), [citeproc-js by Frank Bennett](https://github.com/Juris-M/citeproc-js) and [Citation Style Language styles](https://github.com/citation-style-language/styles) for reference rendering.
 
-Third-party components retain their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [vendor/licenses](vendor/licenses) for attribution and licence information.
+Original project code is available under the [MIT licence](LICENSE). Third-party components retain their own licences. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and [vendor/licenses](vendor/licenses) for attribution and licence information.
 
 © 2026 Citation Workflow · Developed by [Marron Zihao Yao](https://marronyao.com/)
