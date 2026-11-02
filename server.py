@@ -1,5 +1,9 @@
 """Citation Workflow local Windows companion. Python 3.10+, standard library only."""
 import argparse
+from collections import OrderedDict
+from contextlib import contextmanager
+from paper_metadata import MetadataClient, identifier
+from fulltext_sources import SourceRouter
 import html
 import ipaddress
 import json
@@ -24,8 +28,12 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 ROOT = Path(__file__).resolve().parent
 TOKEN = secrets.token_urlsafe(32)
 CACHE = {}
-LAST_NCBI = 0
-NCBI_LOCK = threading.Lock()
+LAST_ARXIV = 0
+ARXIV_LOCK = threading.Lock()
+REQUEST_CONTEXT = threading.local()
+PDF_CACHE = OrderedDict()
+PDF_CACHE_LOCK = threading.Lock()
+PDF_CACHE_LIMIT = 512_000_000
 ALLOWED_ORIGIN = None
 PICKER_LOCK = threading.Lock()
 
@@ -65,12 +73,24 @@ finally:
 
 
 def doi_normalize(value):
-    value = str(value).strip().strip('\"\'').strip()
-    value = re.sub(r'^(?:https?://(?:dx\.)?doi\.org/|doi\s*:\s*)', '', value, flags=re.I)
-    value = U.unquote(value).strip()
-    if not re.fullmatch(r'10\.\d{4,9}/[^\s<>\"]+', value, re.I):
-        raise ValueError('Enter a valid DOI, e.g. 10.1038/s41586-021-03819-2.')
-    return value
+    return identifier(value)
+
+
+@contextmanager
+def request_budget(seconds):
+    previous = getattr(REQUEST_CONTEXT, 'deadline', float('inf'))
+    REQUEST_CONTEXT.deadline = min(previous, time.monotonic()+seconds)
+    try:
+        yield
+    finally:
+        REQUEST_CONTEXT.deadline = previous
+
+
+def remaining_timeout(default=15):
+    remaining = getattr(REQUEST_CONTEXT, 'deadline', float('inf'))-time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError('Source search time limit reached; try this source again later.')
+    return min(default, remaining)
 
 
 def windows_folder(value):
@@ -107,94 +127,34 @@ class Redirect(R.HTTPRedirectHandler):
 
 
 def fetch(url, accept='*/*', limit=8_000_000):
-    global LAST_NCBI
+    global LAST_ARXIV
     safe_url(url)
-    if 'eutils.ncbi.nlm.nih.gov' == U.urlsplit(url).hostname:
-        with NCBI_LOCK:
-            time.sleep(max(0, .36 - (time.monotonic() - LAST_NCBI)))
-            LAST_NCBI = time.monotonic()
-    req = R.Request(url, headers={'User-Agent': 'CitationWorkflow/0.2 (local research tool)', 'Accept': accept})
-    with R.build_opener(Redirect()).open(req, timeout=25) as res:
-        data = res.read(limit + 1)
-        if len(data) > limit:
+    if U.urlsplit(url).hostname == 'export.arxiv.org':
+        with ARXIV_LOCK:
+            pause = max(0, 3.05-(time.monotonic()-LAST_ARXIV))
+            if pause > remaining_timeout():
+                raise TimeoutError('arXiv rate-limit wait exceeds the search time limit.')
+            time.sleep(pause); LAST_ARXIV=time.monotonic()
+    req = R.Request(url, headers={'User-Agent':'CitationWorkflow/0.2 (local research tool)','Accept':accept})
+    with R.build_opener(Redirect()).open(req, timeout=remaining_timeout()) as res:
+        data=res.read(limit+1)
+        if len(data)>limit:
             raise ValueError('The file exceeds the size limit.')
-        return data, res.url, res.headers.get_content_type()
+        return data,res.url,res.headers.get_content_type()
 
 
 def getjson(url):
     return json.loads(fetch(url, 'application/json')[0])
 
 
-def text(node, path):
-    found = node.find(path)
-    return ''.join(found.itertext()).strip() if found is not None else ''
-
-
-def lookup(doi):
-    warnings = []
-    csl = None
-    pmid = pmc = ''
-    article = None
-    try:
-        base = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils/'
-        ids = getjson(base + 'esearch.fcgi?' + U.urlencode({'db':'pubmed','term':doi+'[AID]','retmode':'json'}))['esearchresult']['idlist']
-        if ids:
-            tree = ET.fromstring(fetch(base + 'efetch.fcgi?' + U.urlencode({'db':'pubmed','id':','.join(ids[:5]),'retmode':'xml'}))[0])
-            for entry in tree.findall('.//PubmedArticle'):
-                # ReferenceList contains other papers' identifiers: never include them.
-                identifiers = {n.get('IdType'): n.text or '' for n in entry.findall('./PubmedData/ArticleIdList/ArticleId')}
-                if identifiers.get('doi', '').lower() == doi.lower():
-                    article = entry
-                    pmid, pmc = identifiers.get('pubmed',''), identifiers.get('pmc','')
-                    break
-        if article is None:
-            warnings.append('No exact DOI match found in PubMed; trying DOI registration metadata.')
-    except Exception as e:
-        warnings.append('PubMed is temporarily unavailable: ' + str(e))
-    try:
-        csl = json.loads(fetch('https://doi.org/' + U.quote(doi, safe='/'), 'application/vnd.citationstyles.csl+json')[0])
-    except Exception as e:
-        warnings.append('DOI metadata could not be retrieved: ' + str(e))
-    if article is not None:
-        a = article.find('.//Article')
-        if not csl:
-            authors = []
-            for author in a.findall('./AuthorList/Author'):
-                if text(author, 'CollectiveName'):
-                    authors.append({'literal':text(author,'CollectiveName')})
-                else:
-                    authors.append({'family':text(author,'LastName'), 'given':text(author,'ForeName') or text(author,'Initials')})
-            year = text(a,'Journal/JournalIssue/PubDate/Year') or text(a,'Journal/JournalIssue/PubDate/MedlineDate')[:4]
-            csl = {'type':'article-journal','author':authors,'issued':{'date-parts':[[int(year)]]} if year.isdigit() else {},
-                   'container-title':text(a,'Journal/Title'),'volume':text(a,'Journal/JournalIssue/Volume'),
-                   'issue':text(a,'Journal/JournalIssue/Issue'),'page':text(a,'Pagination/StartPage') or text(a,'Pagination/MedlinePgn')}
-        csl['title'] = text(a,'ArticleTitle') or csl.get('title','')
-        csl['container-title'] = text(a,'Journal/Title') or csl.get('container-title','')
-        csl['container-title-short'] = text(a,'Journal/ISOAbbreviation') or text(article,'MedlineCitation/MedlineJournalInfo/MedlineTA') or csl.get('container-title-short','')
-    if not csl or not csl.get('title'):
-        raise ValueError('No paper metadata found. Check the DOI or try again later.')
-    short = csl.get('container-title-short') or csl.get('journal-abbreviation') or csl.get('short-container-title')
-    if not short:
-        try:
-            metadata = getjson('https://api.crossref.org/works/'+U.quote(doi, safe=''))['message']
-            short = metadata.get('short-container-title')
-            if not csl.get('page'):
-                csl['page'] = metadata.get('page') or metadata.get('article-number','')
-        except Exception:
-            pass
-    if short:
-        csl['container-title-short'] = short[0] if isinstance(short,list) else short
-    csl.update({'id':doi,'DOI':doi})
-    result = {'doi':doi,'csl':csl,'pmid':pmid,'pmc':pmc,'warnings':warnings,
-              'publisher':'https://doi.org/'+doi,'sources':[]}
-    if pmc:
-        result['sources'].append({'name':'PubMed Central','url':f'https://pmc.ncbi.nlm.nih.gov/articles/{pmc}/'})
-    result['sources'].append({'name':'Publisher','url':'https://doi.org/'+doi})
-    key = secrets.token_urlsafe(18)
-    if len(CACHE) >= 64:
+def lookup(value):
+    result=MetadataClient(fetch,getjson).resolve(value)
+    key=secrets.token_urlsafe(18)
+    if len(CACHE)>=256:
         CACHE.pop(next(iter(CACHE)))
-    CACHE[key] = result
-    result['key'] = key
+    result['key']=key
+    result['source_plan']=SOURCE_ROUTER.plan(result)
+    CACHE[key]=result
     return result
 
 
@@ -227,44 +187,68 @@ def reference_example(payload):
 
 class Links(HTMLParser):
     def __init__(self):
-        super().__init__(); self.pdfs = []; self.links = []
-    def handle_starttag(self, tag, attrs):
-        a = dict(attrs)
-        if tag == 'meta' and (a.get('name','').lower() == 'citation_pdf_url' or a.get('property','').lower() == 'citation_pdf_url'):
-            self.pdfs.append(a.get('content',''))
-        if tag in ('iframe','embed'):
-            self.pdfs.append(a.get('src',''))
-        if tag == 'a' and a.get('href'):
-            href = a['href']
-            if re.search(r'(\.pdf(?:[?#]|$)|/pdf(?:[/;?#]|$)|download.*pdf)', href, re.I):
-                self.links.append(href)
+        super().__init__();self.pdfs=[];self.links=[];self.pages=[];self.meta={};self.words=[];self.current=None;self.current_words=[];self.entries=[]
+    def handle_starttag(self,tag,attrs):
+        a=dict(attrs)
+        if tag=='meta':
+            key=(a.get('name') or a.get('property') or '').lower()
+            self.meta[key]=a.get('content','')
+            if key in ('citation_pdf_url','wkhealth_pdf_url'):self.pdfs.append(a.get('content',''))
+        if tag in ('iframe','embed','object'):
+            self.pdfs.append(a.get('src') or a.get('data') or '')
+        if tag=='a' and a.get('href'):
+            href=a['href'];self.current=href;self.current_words=[]
+            if re.search(r'(\.pdf(?:[?#]|$)|/pdf(?:[/;?#]|$)|/download|/get\.php)',href,re.I):self.links.append(href)
+            elif re.search(r'/(?:md5|book|publication|article|scimag)/|ads\.php',href,re.I):self.pages.append(href)
+    def handle_data(self,data):
+        self.words.append(data)
+        if self.current:self.current_words.append(data)
+        if self.current and re.fullmatch(r'\s*(?:GET|Download(?: PDF| full.?text)?)\s*',data,re.I):self.links.append(self.current)
+    def handle_endtag(self,tag):
+        if tag=='a':
+            if self.current:self.entries.append((self.current,' '.join(self.current_words)))
+            self.current=None
 
 
-def find_pdf(url):
-    data, final, kind = fetch(url, limit=80_000_000)
-    if data[:1024].lstrip().startswith(b'%PDF-'):
-        return data, final
-    if 'html' not in kind:
-        raise ValueError('The source did not return a PDF.')
-    parser = Links(); parser.feed(data.decode('utf-8', 'replace'))
-    for candidate in list(dict.fromkeys(parser.pdfs + parser.links))[:10]:
-        try:
-            target = U.urljoin(final, html.unescape(candidate))
-            pdf, resolved, _ = fetch(target, limit=80_000_000)
-            if pdf[:1024].lstrip().startswith(b'%PDF-'):
-                return pdf, resolved
-        except Exception:
-            continue
-    raise ValueError('No directly accessible PDF found. Sign-in or manual verification may be required.')
-
-
-class SearchLinks(HTMLParser):
-    def __init__(self):
-        super().__init__(); self.urls = []
-
-    def handle_starttag(self, tag, attrs):
-        if tag == 'a':
-            self.urls.append(dict(attrs).get('href', ''))
+def find_pdf(url, record=None, trusted=False):
+    queue=[url];seen=set();last_error='No directly accessible PDF found.'
+    for _ in range(5):
+        if not queue:break
+        current=queue.pop(0)
+        if current in seen:continue
+        seen.add(current)
+        data,final,kind=fetch(current,limit=80_000_000)
+        if data[:1024].lstrip().startswith(b'%PDF-'):
+            return data,final
+        if 'html' not in kind:continue
+        parser=Links();parser.feed(data.decode('utf-8','replace'))
+        if record and parser.meta.get('citation_doi') and record.get('doi') and parser.meta['citation_doi'].lower().removeprefix('https://doi.org/')!=record['doi'].lower():
+            last_error='The page identifies a different DOI; skipped.';continue
+        words=' '.join(parser.words)
+        if re.search(r'captcha|verify (?:you|that)|just a moment|log in to download|request full.text',words,re.I) and not parser.pdfs and not parser.links:
+            last_error='Sign-in or manual verification is required.';continue
+        normalise=lambda value:re.sub(r'[^\w]+',' ',html.unescape(str(value))).casefold().strip()
+        matching=set()
+        if record:
+            title=normalise(record['csl']['title']);doi=record.get('doi','').lower()
+            matching={href for href,label in parser.entries if (title and title in normalise(label)) or (doi and doi in (href+' '+label).lower())}
+        catalogue=bool(re.search(r'/search(?:\?|/)|/s/|/scimag/\?',current))
+        pdf_links=parser.pdfs+parser.links
+        if catalogue and not trusted and record:
+            pdf_links=[link for link in pdf_links if link in matching]
+        for candidate in list(dict.fromkeys(pdf_links))[:4]:
+            target=U.urljoin(final,html.unescape(candidate))
+            try:
+                pdf,resolved,content_type=fetch(target,limit=80_000_000)
+                if pdf[:1024].lstrip().startswith(b'%PDF-'):return pdf,resolved
+                if 'html' in content_type and target not in seen:queue.append(target)
+            except Exception as error:last_error=str(error)
+        # Follow bounded catalogue record links on the same site, never advertising links.
+        for candidate in parser.pages[:4]:
+            if record and not trusted and candidate not in matching:continue
+            target=U.urljoin(final,html.unescape(candidate))
+            if U.urlsplit(target).hostname==U.urlsplit(final).hostname and target not in seen:queue.append(target)
+    raise ValueError(last_error+' No PDF was saved.')
 
 
 def browser_search(url):
@@ -280,64 +264,60 @@ def browser_search(url):
         result = subprocess.run([str(browser), '--headless=new', '--disable-gpu', '--no-first-run',
                                  '--no-default-browser-check', '--user-data-dir='+profile,
                                  '--dump-dom', '--timeout=15000', '--virtual-time-budget=5000', url],
-                                capture_output=True, timeout=30,
+                                capture_output=True, timeout=remaining_timeout(30),
                                 creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         if result.returncode or not result.stdout:
             raise ValueError('Browser search did not return a search page.')
         return result.stdout
 
 
-def discover_mirrors():
-    """Discover candidates afresh; PDF retrieval below checks actual availability."""
-    errors = []
-    engines = ('https://www.google.com/search?q=', 'https://html.duckduckgo.com/html/?q=')
-    searches = [(engine, False) for engine in engines] + [(engine, True) for engine in engines]
-    for engine, rendered in searches:
-        try:
-            url = engine + U.quote('Sci-Hub active mirror')
-            data = browser_search(url) if rendered else fetch(url, 'text/html')[0]
-            links = SearchLinks(); links.feed(data.decode('utf-8', 'replace'))
-            mirrors = []
-            for href in links.urls:
-                parts = U.urlsplit(html.unescape(href))
-                query = U.parse_qs(parts.query)
-                candidate = (query.get('uddg') or query.get('q') or query.get('url') or [href])[0]
-                parsed = U.urlsplit(candidate)
-                # Only direct Sci-Hub domains, never a search-result lookalike or private host.
-                if parsed.scheme == 'https' and re.fullmatch(r'(?:www\.)?sci-hub\.[a-z]{2,12}', parsed.hostname or ''):
-                    origin = 'https://' + parsed.hostname
-                    safe_url(origin)
-                    if origin not in mirrors:
-                        mirrors.append(origin)
-            if mirrors:
-                return mirrors[:3], errors
-            errors.append('Sci-Hub discovery: search returned no eligible mirror links.')
-        except Exception as e:
-            errors.append('Sci-Hub discovery: ' + str(e))
-    return [], errors
+SOURCE_ROUTER=SourceRouter(lambda *a,**k:fetch(*a,**k), lambda *a,**k:getjson(*a,**k), lambda url:safe_url(url), lambda url:browser_search(url), lambda *a,**k:find_pdf(*a,**k), request_budget)
 
 
-def pmc_sources(record):
-    return [source for source in record['sources'] if source['name'] == 'PubMed Central'], []
+def cached_pdf(key):
+    with PDF_CACHE_LOCK:
+        now=time.monotonic()
+        for stale in [k for k,v in PDF_CACHE.items() if v['expires']<now]:
+            PDF_CACHE.pop(stale)['file'].close()
+        item=PDF_CACHE.get(key)
+        if item:
+            PDF_CACHE.move_to_end(key)
+            item['file'].seek(0)
+            return {**item['result'],'pdf':item['file'].read()}
+    return None
 
 
-def scihub_sources(record):
-    mirrors, errors = discover_mirrors()
-    return [{'name':'Sci-Hub', 'url':mirror+'/'+U.quote(record['doi'], safe='/')} for mirror in mirrors], errors
-
-
-# Add future database adapters here. Each returns (candidate sources, discovery errors).
-DATABASE_PROVIDERS = (pmc_sources, scihub_sources)
+def search_fulltext(payload):
+    record=CACHE.get(payload.get('key'))
+    if not record:raise ValueError('The paper session has expired. Find the paper again.')
+    result=cached_pdf(record['key'])
+    if result:return {k:v for k,v in result.items() if k!='pdf'}
+    with request_budget(360):
+        result=SOURCE_ROUTER.retrieve(record)
+    if result['ok']:
+        pdf=result.pop('pdf')
+        file=tempfile.TemporaryFile();file.write(pdf);file.seek(0)
+        with PDF_CACHE_LOCK:
+            if record['key'] in PDF_CACHE:PDF_CACHE.pop(record['key'])['file'].close()
+            PDF_CACHE[record['key']]={'file':file,'bytes':len(pdf),'expires':time.monotonic()+1800,'result':dict(result)}
+            while sum(item['bytes'] for item in PDF_CACHE.values())>PDF_CACHE_LIMIT:
+                PDF_CACHE.popitem(last=False)[1]['file'].close()
+    else:
+        result.update({'login':record['publisher'],'publishers':publisher_choices(record)})
+    return result
 
 
 def publisher_choices(record):
     choices = []
-    urls = [record['publisher'], record['csl'].get('URL', '')]
+    urls = [record['publisher'], record['csl'].get('URL', ''), 'https://doi.org/'+record['doi'] if record.get('doi') else '']
+    labels={'nature.com':'Nature','cell.com':'Cell Press','sciencedirect.com':'Elsevier','elsevier.com':'Elsevier','wiley.com':'Wiley','pubs.acs.org':'ACS','pubs.rsc.org':'RSC','link.springer.com':'Springer','ieeexplore.ieee.org':'IEEE','dl.acm.org':'ACM'}
     for url in urls:
         try:
             safe_url(url)
             if url and url not in [choice['url'] for choice in choices]:
-                choices.append({'name':'Publisher · '+(record['csl'].get('publisher') or U.urlsplit(url).hostname), 'url':url})
+                host=U.urlsplit(url).hostname
+                label=next((label for domain,label in labels.items() if host==domain or host.endswith('.'+domain)),None)
+                choices.append({'name':'Official article · '+(label or record.get('platform') or record['csl'].get('publisher') or host), 'url':url})
         except Exception:
             continue
     choices.append({'name':'Search Google for the publisher', 'url':'https://www.google.com/search?'+U.urlencode({'q':record['doi']+' '+record['csl']['title']+' publisher'})})
@@ -345,48 +325,32 @@ def publisher_choices(record):
 
 
 def download(payload):
-    record = CACHE.get(payload.get('key'))
-    if not record and payload.get('doi'):
-        record = lookup(doi_normalize(payload['doi']))
-    if not record:
-        raise ValueError('The paper session has expired. Find the paper again to continue.')
-    folder = windows_folder(payload.get('folder',''))
-    if os.name != 'nt':
-        raise ValueError('Only Windows is currently supported.')
-    target = Path(folder)
-    if not target.is_dir():
-        raise ValueError('The folder does not exist. Create it first or choose an existing folder.')
-    errors = []
-    def candidates():
-        for provider in DATABASE_PROVIDERS:
-            try:
-                sources, discovery_errors = provider(record)
-                errors.extend(discovery_errors)
-                yield from sources
-            except Exception as e:
-                errors.append(provider.__name__ + ': ' + str(e))
-
-    for source in candidates():
+    folder=windows_folder(payload.get('folder',''))
+    if os.name!='nt':raise ValueError('Only Windows is currently supported.')
+    target=Path(folder)
+    if not target.is_dir():raise ValueError('The folder does not exist. Create it first or choose an existing folder.')
+    record=CACHE.get(payload.get('key'))
+    if not record and (payload.get('identifier') or payload.get('doi')):
+        record=lookup(payload.get('identifier') or payload['doi'])
+    if not record:raise ValueError('The paper session has expired. Find the paper again.')
+    key=record['key']
+    result=cached_pdf(key)
+    if not result:
+        result=search_fulltext({'key':key})
+        if not result['ok']:return result
+        result=cached_pdf(key)
+    if not result:raise ValueError('The temporary PDF has expired. Retry the download.')
+    pdf=result['pdf'];name=filename(record['csl']['title'])
+    for n in range(10000):
+        dest=target/(name if n==0 else name[:-4]+f' ({n}).pdf')
         try:
-            pdf, url = find_pdf(source['url'])
-        except Exception as e:
-            errors.append(source['name']+'：'+str(e)); continue
-        name = filename(record['csl']['title'])
-        dest = target / name
-        # Exclusive creation prevents overwriting; duplicate files get a numeric suffix.
-        for n in range(10000):
-            dest = target / (name if n == 0 else name[:-4]+f' ({n}).pdf')
-            try:
-                with dest.open('xb') as f:
-                    try:
-                        f.write(pdf)
-                    except Exception:
-                        f.close(); dest.unlink(missing_ok=True); raise
-                return {'ok':True,'path':str(dest),'bytes':len(pdf),'source':source['name'],'url':url,'attempts':errors}
-            except FileExistsError:
-                continue
-        raise ValueError('Too many files share this name. Choose another folder.')
-    return {'ok':False,'login':record['publisher'],'publishers':publisher_choices(record),'attempts':errors}
+            with dest.open('xb') as file:
+                try:file.write(pdf)
+                except Exception:
+                    file.close();dest.unlink(missing_ok=True);raise
+            return {**{k:v for k,v in result.items() if k!='pdf'},'ok':True,'path':str(dest),'bytes':len(pdf)}
+        except FileExistsError:continue
+    raise ValueError('Too many files share this name. Choose another folder.')
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -427,7 +391,9 @@ class Handler(SimpleHTTPRequestHandler):
                 raise ValueError('Invalid request size.')
             payload = json.loads(self.rfile.read(length))
             if self.path == '/api/lookup':
-                result = lookup(doi_normalize(payload.get('doi','')))
+                result = lookup(payload.get('identifier') or payload.get('doi',''))
+            elif self.path == '/api/search':
+                result = search_fulltext(payload)
             elif self.path == '/api/download':
                 result = download(payload)
             elif self.path == '/api/folder':

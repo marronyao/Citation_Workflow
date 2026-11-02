@@ -6,9 +6,16 @@ let config = {folder:'', autoDownload:true};
 try { Object.assign(config, JSON.parse(localStorage.getItem('citation-settings') || '{}')); } catch {}
 const escapeHTML = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function normalizeDOI(value) {
-  let s = value.trim().replace(/^["']+|["']+$/g,'').trim().replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)/i,'');
-  try { s = decodeURIComponent(s); } catch { throw Error('The DOI contains invalid URL encoding.'); }
-  if (!/^10\.\d{4,9}\/[^\s<>"']+$/i.test(s)) throw Error('Enter a valid DOI or https://doi.org/ link.');
+  let s=value.trim().replace(/^["']+|["']+$/g,'').trim();
+  try {s=decodeURIComponent(s);} catch {throw Error('The identifier contains invalid URL encoding.');}
+  const arxiv=s.replace(/^(?:arxiv:\s*|https?:\/\/(?:export\.)?arxiv\.org\/(?:abs|pdf|html)\/)/i,'').split('?')[0].replace(/\.pdf$/i,'');
+  if(/^(?:\d{4}\.\d{4,5}|[a-z][a-z.-]+(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/i.test(arxiv)) return 'arxiv:'+arxiv;
+  if(/^https?:\/\//i.test(s)) {
+    const url=new URL(s),host=url.hostname;
+    if(!url.username && !url.password && !url.port && (['arxiv.org','www.biorxiv.org','biorxiv.org','www.medrxiv.org','medrxiv.org','chemrxiv.org','www.chemrxiv.org','proceedings.neurips.cc','proceedings.mlr.press','openaccess.thecvf.com','aclanthology.org'].includes(host))) return 'https://'+host+url.pathname;
+  }
+  s=s.replace(/^(?:https?:\/\/(?:dx\.)?doi\.org\/|doi\s*:\s*)/i,'');
+  if(!/^10\.\d{4,9}\/[^\s<>"']+$/i.test(s)) throw Error('Enter a DOI, arXiv ID, preprint link or supported conference paper link.');
   return s;
 }
 function normalizeFolder(s) {
@@ -58,7 +65,9 @@ async function connect() {
 async function api(route, payload) {
   if (!token && !await connect()) throw Error('Double-click start.bat to start the local assistant, then open http://127.0.0.1:8765. If it is already running, check that your browser allows local network access.');
   const response=await fetch(API+'/api/'+route,{method:'POST',headers:{'Content-Type':'application/json','X-Citation-Token':token},body:JSON.stringify(payload),signal:AbortSignal.timeout(600000)});
-  const data=await response.json(); if (!response.ok) throw Error(data.error || 'The local assistant could not complete the request.'); return data;
+  const data=await response.json();
+  if(!response.ok && data.error==='Unknown API') throw Error('Update the local companion from GitHub, close the old companion and restart start.bat, then refresh this page.');
+  if (!response.ok) throw Error(data.error || 'The local assistant could not complete the request.'); return data;
 }
 function link(label,url,parent) {
   if (!/^https?:\/\//i.test(url)) return;
@@ -69,21 +78,41 @@ function initialTitle(title, style) {
   if(style==='custom' && customDefinition?.titleCase==='title') return journalCase(title);
   return style==='apa' || (style==='custom' && customDefinition?.titleCase==='sentence')?sentenceCase(title,$('protected').value):title;
 }
-function formatReference(paper, style, title) {
+function baseFormatReference(paper, style, title) {
   if(style==='custom') return CustomStyle.format(paper,customDefinition,title ?? initialTitle(paper.csl.title,style));
   const csl=structuredClone(paper.csl);
+  if(paper.kind==='preprint') csl.genre='Preprint'+(paper.version?', version '+paper.version:'');
   csl.title=(title ?? (style==='apa'?sentenceCase(csl.title):csl.title)).replace(/\.$/,'');
   if(style==='apa') csl['container-title']=journalCase(csl['container-title']||'');
   if(style==='ris') {
-    const lines=['TY  - JOUR','TI  - '+csl.title];
+    const kind=paper.kind || (csl.type==='paper-conference'?'conference':csl.genre==='Preprint'?'preprint':'journal');
+    const lines=['TY  - '+(kind==='conference'?'CPAPER':kind==='preprint'?'UNPB':'JOUR'),'TI  - '+csl.title];
     (csl.author||[]).forEach(a=>lines.push('AU  - '+(a.literal || [a.family,a.given].filter(Boolean).join(', '))));
-    for(const [tag,value] of [['JO',csl['container-title']],['PY',csl.issued?.['date-parts']?.[0]?.[0]],['VL',csl.volume],['IS',csl.issue],['SP',csl.page?.split('-')[0]],['EP',csl.page?.split('-')[1]],['DO',paper.doi],['UR',paper.publisher]]) if(value) lines.push(tag+'  - '+String(value).replace(/[\r\n]/g,' '));
+    for(const [tag,value] of [[(kind==='conference'?'T2':'JO'),csl['container-title']],['PY',csl.issued?.['date-parts']?.[0]?.[0]],['VL',csl.volume],['IS',csl.issue],['SP',csl.page?.split('-')[0]],['EP',csl.page?.split('-')[1]],['DO',paper.doi],['UR',paper.publisher],['PB',csl.publisher],['N1',kind==='preprint'?'Preprint; '+(paper.platform||csl.publisher||'')+(paper.version?'; version '+paper.version:''):'']]) if(value) lines.push(tag+'  - '+String(value).replace(/[\r\n]/g,' '));
     lines.push('ER  -'); return {text:lines.join('\n')};
   }
-  if(style==='bibtex') return {text:new Cite(csl).format('bibtex')};
+  if(style==='bibtex') {
+    let text=new Cite(csl).format('bibtex');
+    if(paper.kind==='preprint') {
+      text=text.replace(/^@\w+/,'@misc');
+      const extra=['note = {Preprint'+(paper.version?'; version '+paper.version:'')+'}'];
+      if(paper.platform==='arXiv') extra.push('eprint = {'+paper.identifier.replace(/^arxiv:/,'')+'}','archivePrefix = {arXiv}');
+      text=text.replace(/,?\s*}\s*$/,',\n  '+extra.join(',\n  ')+'\n}');
+    }
+    return {text};
+  }
   csl.title='<span class="nocase">'+escapeHTML(csl.title)+'</span>';
   const cite=new Cite(csl), options={template:style,lang:'en-US'};
-  return {text:cite.format('bibliography',{...options,format:'text'}).trim()};
+  let text=cite.format('bibliography',{...options,format:'text'}).trim();
+  return {text};
+}
+function formatReference(paper,style,title) {
+  const result=baseFormatReference(paper,style,title);
+  if(paper.kind==='preprint' && !['bibtex','ris'].includes(style)) {
+    const label='[Preprint'+(paper.platform?'; '+paper.platform:'')+(paper.version?'; version '+paper.version:'')+']';
+    if(!/\bpreprint\b/i.test(result.text) || (paper.version && !result.text.includes('version '+paper.version))) result.text+=' '+label;
+  }
+  return result;
 }
 function renderCitation() {
   if(!record) return;
@@ -100,12 +129,11 @@ function displayRecord() {
   $('paperTitle').textContent=c.title;
   $('authors').textContent=(c.author||[]).map(a=>a.literal||[a.family,a.given].filter(Boolean).join(', ')).join('; ');
   $('journalMeta').textContent=[c['container-title'],c.issued?.['date-parts']?.[0]?.[0],c.volume && c.volume+(c.issue?'('+c.issue+')':''),c.page].filter(Boolean).join(' · ');
-  $('identifiers').textContent='DOI: '+record.doi+(record.pmid?' · PMID: '+record.pmid:'')+(record.pmc?' · '+record.pmc:'');
+  $('identifiers').textContent=[record.kind==='conference'?'Conference paper':record.kind==='preprint'?'Preprint':'Journal article',record.doi?'DOI: '+record.doi:record.identifier,record.platform,record.version?'Version '+record.version:''].filter(Boolean).join(' · ');
   $('sourceLinks').replaceChildren();
-  if(record.pmid) link('PubMed','https://pubmed.ncbi.nlm.nih.gov/'+record.pmid+'/', $('sourceLinks'));
   record.sources.forEach(s=>link(s.name,s.url,$('sourceLinks')));
-  $('pubmedStatus').textContent=record.pmid?'Paper found with an exact DOI match':'No confirmed PubMed record; using DOI metadata';
-  $('sourceStatus').textContent=record.pmc?'Search order: PMC → Sci-Hub → offer publisher':'Search order: Sci-Hub → offer publisher';
+  $('metadataStatus').textContent='Reference data: '+(record.metadata_source||'DOI registration');
+  $('sourceStatus').textContent='Search plan: '+(record.source_plan||[]).join(' → ');
   $('downloadStatus').textContent='Ready to download'; $('attemptDetails').hidden=true;
   $('articleTitle').disabled=false;
   $('articleTitle').value=initialTitle(c.title,$('style').value);
@@ -121,32 +149,44 @@ async function doDownload() {
   if(!config.folder) { pendingDownload=true; showSettings(); return; }
   lock(true); $('downloadStatus').textContent='Finding full text and downloading the PDF…'; notice('Checking PDF sources in order. Some websites may take a moment to respond.');
   try {
-    const result=await api('download',{key:record.key,doi:record.doi,folder:config.folder});
-    $('attempts').replaceChildren(); (result.attempts||[]).forEach(s=>{const li=document.createElement('li');li.textContent=s;$('attempts').append(li);}); $('attemptDetails').hidden=!(result.attempts?.length);
+    const result=await api('download',{key:record.key,doi:record.doi,identifier:record.identifier,folder:config.folder});
+    showAttempts(result);
     if(result.ok) {
       $('downloadStatus').textContent=`PDF saved · ${(result.bytes/1024/1024).toFixed(2)} MB`;
-      $('sourceStatus').textContent='Full text retrieved from '+result.source; notice([...record.warnings,'Saved to: '+result.path].join('\n'));
+      $('sourceStatus').textContent='Full text retrieved from '+result.source+(result.version_note?' · '+result.version_note:''); notice([...record.warnings,'Saved to: '+result.path].join('\n'));
     } else {
       $('downloadStatus').textContent='Database search finished; publisher options available'; notice('Your reference is ready, but the PDF could not be downloaded. See the source search history for details.');
-      $('publisherChoices').replaceChildren();
-      const choices=result.publishers?.length?result.publishers:[{name:'Open publisher',url:result.login}];
-      choices.forEach(choice=>link(choice.name,choice.url,$('publisherChoices')));
-      $('loginDialog').showModal();
+      offerPublishers(result);
     }
   } catch(e) { $('downloadStatus').textContent='Download failed'; notice(e.message,true); }
   finally {lock(false);}
 }
+function showAttempts(result) {
+  $('attempts').replaceChildren();
+  (result.attempts||[]).forEach(message=>{const li=document.createElement('li');li.textContent=message;$('attempts').append(li);});
+  $('attemptDetails').hidden=!(result.attempts?.length);
+}
+function offerPublishers(result) {
+  $('publisherChoices').replaceChildren();
+  (result.publishers?.length?result.publishers:[{name:'Open official article',url:result.login}]).forEach(choice=>link(choice.name,choice.url,$('publisherChoices')));
+  if(!$('loginDialog').open) $('loginDialog').showModal();
+}
 $('lookupForm').addEventListener('submit',async e=>{
-  e.preventDefault(); if(busy) return;
+  e.preventDefault();if(busy)return;let available=false;
   try {
-    const doi=normalizeDOI($('doi').value); $('doi').value=doi;
-    // Clear old results so a failed lookup cannot download/copy an earlier paper accidentally.
-    record=null; $('paper').hidden=true; $('empty').hidden=false; $('articleTitle').value=''; $('articleTitle').disabled=true; $('citationText').value=''; $('citationWarning').textContent=''; $('copy').disabled=true;
-    lock(true); notice('Searching PubMed and retrieving paper metadata…');
-    record=await api('lookup',{doi}); displayRecord(); notice(record.warnings.join('\n'));
-  } catch(e) { notice(e.message,true); }
+    const identifier=normalizeDOI($('doi').value);$('doi').value=identifier;
+    record=null;$('paper').hidden=true;$('empty').hidden=false;$('articleTitle').value='';$('articleTitle').disabled=true;$('citationText').value='';$('citationWarning').textContent='';$('copy').disabled=true;
+    lock(true);notice('Reading reference data and selecting suitable full-text databases…');
+    record=await api('lookup',{identifier});displayRecord();
+    $('downloadStatus').textContent='Searching for a free full-text PDF…';
+    const result=await api('search',{key:record.key});showAttempts(result);available=result.ok;
+    $('sourceStatus').textContent=result.ok?'PDF found: '+result.source+(result.version_note?' · '+result.version_note:''):'Source search finished; see history for availability and verification details';
+    $('downloadStatus').textContent=result.ok?'PDF found; ready to save':'No automatic PDF retrieved; official article options available';
+    notice(record.warnings.join('\n'));
+    if(!result.ok)offerPublishers(result);
+  } catch(e) {notice(e.message,true);}
   finally {lock(false);}
-  if(record && config.autoDownload) await doDownload();
+  if(record && available && config.autoDownload)await doDownload();
 });
 $('example').onclick=()=>{$('doi').value='10.1371/journal.pbio.3000117'; $('doi').focus();};
 $('download').onclick=doDownload;
@@ -268,10 +308,20 @@ $('batchForm').onsubmit=async e=>{
     for(const [index,item] of batchItems.entries()) {
       $('batchStatus').textContent=`Finding paper ${index+1} of ${batchItems.length}…`;
       try {
-        item.doi=normalizeDOI(item.doi);item.paper=await api('lookup',{doi:item.doi});
+        item.doi=normalizeDOI(item.doi);item.paper=await api('lookup',{identifier:item.doi});
         const title=item.paper.csl.title, words=title.split(/\s+/);
         item.titleCell.textContent=words.length>9?words.slice(0,9).join(' ')+'…':title;item.titleCell.title=title;
+        const type=document.createElement('small');type.className='row-kind';type.textContent=item.paper.kind==='conference'?'Conference paper':item.paper.kind==='preprint'?'Preprint'+(item.paper.version?' · v'+item.paper.version:''):'Journal article';item.titleCell.append(type);
         prepareBatchCitation(item);found++;
+        item.status.textContent='Searching full-text sources…';
+        try {
+          const result=await api('search',{key:item.paper.key});
+          item.status.textContent=result.ok?'PDF found · '+result.source+(result.version_note?' · '+result.version_note:''):'No PDF retrieved; official article options below';
+          if(!result.ok)(result.publishers||[]).forEach(choice=>link(choice.name,choice.url,item.links));
+          const details=document.createElement('details'),summary=document.createElement('summary'),list=document.createElement('ul');summary.textContent='Source search history';details.append(summary,list);
+          (result.attempts||[]).forEach(message=>{const li=document.createElement('li');li.textContent=message;list.append(li);});item.pdfCell.append(details);
+        } catch(error) {item.status.textContent='Full-text search failed: '+error.message;}
+
       } catch(e) {item.titleCell.textContent='Lookup failed: '+e.message;item.status.textContent='Unavailable';}
     }
     $('batchStatus').textContent=`Found ${found} of ${batchItems.length} papers. Choose individual PDFs or download all below.`;
@@ -280,7 +330,7 @@ $('batchForm').onsubmit=async e=>{
 async function downloadBatchItem(item,folder) {
   item.status.textContent='Searching sources and saving PDF…';item.links.replaceChildren();
   try {
-    const result=await api('download',{key:item.paper.key,doi:item.paper.doi,folder});
+    const result=await api('download',{key:item.paper.key,doi:item.paper.doi,identifier:item.paper.identifier,folder});
     if(result.ok) {item.savedFolder=folder;item.status.textContent='Saved to '+result.path;}
     else {
       item.status.textContent='PDF unavailable. Choose a publisher link or retry.';

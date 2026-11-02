@@ -1,8 +1,8 @@
 # Citation Workflow
 
-Find a paper by DOI, save its PDF and generate a reference — in one workspace.
+Find a paper by DOI, preprint ID or repository link, save its PDF and generate a reference — in one workspace.
 
-Citation Workflow is a research tool for biological literature, with a dark interface, PubMed lookup and editable references. The website runs on GitHub Pages; a small Windows companion handles full-text retrieval and saves PDFs to your chosen folder.
+Citation Workflow is a research tool for biological literature, with a dark interface, direct full-text source search and editable references. The website runs on GitHub Pages; a small Windows companion handles full-text retrieval and saves PDFs to your chosen folder.
 
 **[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Developer’s website](https://marronyao.com/)**
 
@@ -10,9 +10,11 @@ Citation Workflow is a research tool for biological literature, with a dark inte
 
 ## Features
 
-- Accepts a DOI on its own, a `doi:` prefix or a full `https://doi.org/` link.
-- Searches PubMed and verifies an exact DOI match, with DOI registration metadata as a fallback.
-- Tries third-party PDF databases first: PubMed Central, then automatically discovered Sci-Hub mirrors. Offers publisher links only after the database search cannot retrieve a PDF.
+- Accepts DOIs, versioned arXiv IDs, original preprint links, and individual NeurIPS/PMLR/CVF/ACL conference-paper pages.
+- Uses Crossref, DataCite and original repository metadata for references. **PubMed is not queried.**
+- Searches for a free full-text PDF when you select Find paper, even when automatic saving is turned off.
+- Routes to suitable original preprint/conference repositories, PMC, Sci-Hub, ResearchGate, Z-Library, Library Genesis and Anna’s Archive. Mirror candidates are discovered automatically; availability and verification failures are recorded.
+- Supports journal articles, conference papers and preprints, preserving proceedings titles and explicit preprint versions. Offers official publisher/repository links only after automatic source retrieval fails.
 - Saves verified PDFs using the original article title, replacing unsupported Windows filename characters. Duplicate downloads receive a numeric suffix rather than overwriting an existing file.
 - Generates **APA 7, Vancouver, Harvard, BibTeX, RIS and custom** references.
 - Applies APA sentence case to article titles and title case to journal names, with editable titles and a list of proper nouns to preserve.
@@ -47,8 +49,8 @@ If your browser asks for permission to connect to the local network, allow it fo
 ### 3. Find and save a paper
 
 1. Select **Set download folder** above the DOI search. Enter an existing Windows folder, or select **Browse folders** to open the native Windows folder picker.
-2. Enter a DOI or DOI link and select **Find paper**.
-3. Review the paper details and reference. Downloads start automatically by default; turn this off in settings if you prefer to select **Download PDF** yourself.
+2. Enter a DOI, arXiv ID or supported paper link and select **Find paper**. The tool reads reference metadata and immediately searches suitable full-text sources.
+3. Review the paper details and reference. PDFs are saved automatically by default after a source is found; turn this off in settings if you prefer to select **Download PDF** yourself.
 4. Choose a reference style, check the title’s capitalisation and select **Copy citation**.
 
 Accepted folder examples:
@@ -63,7 +65,7 @@ Only absolute Windows drive paths are supported. The folder must already exist; 
 
 ## Batch downloads
 
-Select **Batch download** in the top-right corner. Choose a working folder (type its path or use **Browse folders**), select a reference style, and paste one DOI or DOI link per line. Select **Find papers** to build a results table. Long titles show their first nine words; hover over a title to see it in full.
+Select **Batch download** in the top-right corner. Choose a working folder (type its path or use **Browse folders**), select a reference style, and paste one DOI, preprint ID or supported paper link per line. Select **Find papers** to build a results table and search for accessible PDFs. Each row shows its paper type and source-search history. Long titles show their first nine words; hover over a title to see it in full.
 
 Each row provides **Download PDF** and **Copy citation** actions. **Download all PDFs** saves papers sequentially to the selected folder and skips those already saved there during this batch. A failed lookup or download does not stop the remaining papers; failed downloads can be retried or opened through publisher options. Changing the reference style regenerates the row citations. Batch mode does not start downloads until you select a download action.
 
@@ -71,13 +73,32 @@ The folder picker runs through the local companion and requires the standard Pyt
 
 ## Full-text access
 
-The companion checks PubMed Central first, then searches Google (with DuckDuckGo as a fallback) for Sci-Hub mirror candidates. If plain search pages contain no usable links, it retries in an isolated, hidden Chrome or Edge session, without using your signed-in browser profile. It tries up to three distinct HTTPS mirror domains and checks each retrieved file for a PDF header. No manual mirror setting is needed. Search results do not guarantee that a mirror is working; blocked searches, unavailable mirrors and failed retrievals appear in the source search history.
+Reference metadata and PDF retrieval are separate. Crossref, DataCite or the original repository supplies the title, authors, paper type and other citation fields. The companion never searches PubMed. PMC is queried directly through its DOI-to-PMC identifier service. PMC PDFs are retrieved from the current public PMC Article Datasets cloud service using DOI-matched version metadata. Deposited article versions are preferred over author manuscripts, which are labelled. The retired OA Web Service is not used.
 
-Database adapters are registered in `DATABASE_PROVIDERS` in `server.py`, allowing more sources to be added in order. A successful download stops the search before later adapters run. The publisher is not used as an automatic PDF source.
+The source plan prioritises the original repository for a preprint or a conference paper linked directly. Journal articles try PMC, followed by Sci-Hub, ResearchGate, Z-Library, Library Genesis and Anna’s Archive. Conference proceedings are routed to relevant NeurIPS, PMLR, CVF or ACL repositories when identifiable. Recent source successes affect subsequent source order; recent connection or verification failures are temporarily cooled down and reported rather than retried continuously.
 
-If the databases cannot retrieve a PDF, a dialogue offers the DOI resolver, a publisher URL from the article metadata when available, and a Google search link. The DOI resolver redirects to the registered publisher. The user chooses which link to open and can sign in through their institution to complete the download there. The companion does not share your browser’s sign-in session or handle CAPTCHA and JavaScript challenges. Some publisher layouts will require a manual download even when full text is available.
+Sci-Hub, Z-Library, Library Genesis and Anna’s Archive mirror candidates are discovered through Google/DuckDuckGo search, a Bing structured-search fallback and isolated Chrome/Edge rendering. Domain-pattern filtering rejects obvious lookalike suffixes and local-network URLs; it does not certify a mirror’s ownership or guarantee that it works. No manual mirror address, account creation or credentials are required by this tool. Login-only content, CAPTCHA, author-copy requests and JavaScript challenges may prevent automatic retrieval. The companion does not solve these challenges or send requests to authors.
 
-References can still be generated when the PDF is unavailable. Downloads are limited to 80 MB and checked for a PDF header before saving.
+If no PDF is retrieved, a dialogue offers official links from the DOI/repository metadata and a Google search link. This handles publishers such as Nature, Cell Press, Elsevier, Wiley, ACS, RSC, Springer, IEEE and ACM through their article metadata, without treating publisher sites as automatic fallbacks. A source failure means retrieval failed, not that the paper definitely has no free copy.
+
+Searches have per-source and overall time limits. Found PDFs are checked for a PDF header and temporarily cached locally with a 30-minute entry expiry and a 512 MB total cache limit (expired files are removed on subsequent cache access or when the companion exits), so a later save can reuse the retrieved file. Larger batches may evict earlier files, which are searched again when needed. Copies are saved to the chosen Windows folder only after a download action, or when automatic saving is enabled. Individual downloads remain limited to 80 MB.
+
+## Conference papers and preprints
+
+Supported inputs include:
+
+```text
+10.1145/3292500.3330691
+arxiv:1706.03762v1
+https://arxiv.org/abs/1706.03762v1
+https://proceedings.mlr.press/v70/haarnoja17a.html
+https://www.biorxiv.org/content/10.1101/2020.01.21.914929v1
+10.26434/chemrxiv-2025-5qsh2
+```
+
+Conference DOIs retain the `paper-conference` citation type, proceedings title and event metadata when supplied. Individual NeurIPS/PMLR/CVF/ACL pages can also supply conference metadata and PDFs without a DOI. Use a paper page, not an entire volume or conference index.
+
+arXiv IDs and article links, bioRxiv/medRxiv DOIs or versioned links, and ChemRxiv DOIs or supported article links are accepted. Unversioned arXiv and bioRxiv/medRxiv inputs resolve to the current version; explicit versions are preserved. Preprint citations are labelled and do not silently switch to the later journal article. BibTeX includes arXiv eprint information; RIS distinguishes conference papers (`CPAPER`), preprints (`UNPB`) and journal articles (`JOUR`). Repository access restrictions can still prevent PDF retrieval, including on preprint platforms.
 
 ## Reference formatting
 
@@ -93,7 +114,7 @@ Select **Custom · from an example** in either single-paper or batch mode, then 
 
 The detected template preserves field order, punctuation, author-name convention, visible “et al.” usage, year placement, page-range style and full or abbreviated journal names. The same custom template is shared between single and batch mode and saved in this browser. An incomplete or ambiguous example disables custom citation copying until it can be identified, rather than reusing an earlier format.
 
-Journal abbreviations are taken from PubMed ISOAbbreviation/MedlineTA or Crossref abbreviation metadata. A dotted example produces dotted abbreviations; an undotted example preserves the undotted form. If no verified abbreviation is available for a target paper, the full journal name is used with a visible note. Abbreviations are never created by arbitrarily shortening a new journal name.
+Journal abbreviations are taken from the available DOI registration metadata; no PubMed lookup is made. A dotted example produces dotted abbreviations; an undotted example preserves the undotted form. If no verified abbreviation is available for a target paper, the full journal name is used with a visible note. Abbreviations are never created by arbitrarily shortening a new journal name.
 
 One plain-text example cannot reveal hidden journal rules such as an author limit not exercised in the example, typography, or every special article type. Review the generated text against the journal’s instructions. The example and saved template stay in browser storage; the example is sent to the local companion and, when no DOI is supplied, to Crossref for bibliographic identification. No AI API key is needed.
 
@@ -105,7 +126,7 @@ GitHub Pages / local webpage
           │ DOI lookup and download requests
           ▼
 Windows companion at 127.0.0.1:8765
-          ├── PubMed / DOI metadata
+          ├── DOI / conference / preprint metadata
           ├── Full-text and PDF sources
           └── Your selected Windows folder
 ```
@@ -114,7 +135,7 @@ GitHub Pages hosts the static interface and cannot run the Python companion or w
 
 The companion listens only on the loopback interface. It accepts its local origin and, when started with the command above, `https://marronyao.github.io`. API requests that initiate lookups or downloads require a random session token. The local server exposes only the frontend assets, rather than arbitrary local files.
 
-Folder and automatic-download preferences are stored in the browser’s local storage. Folder paths are sent to the local companion for saving; the configured folder is not sent to publication metadata or full-text services. DOI queries and download requests are sent to the relevant external services.
+Folder and automatic-download preferences are stored in the browser’s local storage. Folder paths are sent to the local companion for saving; the configured folder is not sent to publication metadata or full-text services. Identifiers, paper titles and download requests are sent to the relevant metadata, repository and search services. Temporary full-text cache files stay on this computer.
 
 ## Development
 
@@ -131,7 +152,7 @@ The bundled citation engine is committed so the application works without instal
 | File | Purpose |
 | --- | --- |
 | `index.html`, `styles.css`, `app.js`, `custom-style.js` | Static interface and custom reference inference |
-| `server.py`, `start.bat` | Windows companion and launcher |
+| `server.py`, `paper_metadata.py`, `fulltext_sources.py`, `start.bat` | Windows companion, metadata, source routing and launcher |
 | `citation-entry.js`, `vendor/citation.js` | Citation engine entry point and browser bundle |
 | `tests/` | DOI, path, download and formatting checks |
 | `.github/workflows/pages.yml` | Checks and GitHub Pages deployment |
@@ -140,7 +161,8 @@ The deployment workflow checks the project on Windows and publishes only fronten
 
 ## Sources and acknowledgements
 
-- [NCBI E-Utilities](https://www.ncbi.nlm.nih.gov/books/NBK25499/) for PubMed records.
+- [PMC ID Converter](https://pmc.ncbi.nlm.nih.gov/tools/id-converter-api/) and [PMC Article Datasets cloud service](https://pmc.ncbi.nlm.nih.gov/tools/pmcaws/) for direct PMC access.
+- [Crossref](https://www.crossref.org/documentation/retrieve-metadata/rest-api/), [DataCite](https://support.datacite.org/docs/rest-api), [arXiv](https://info.arxiv.org/help/api/user-manual.html) and [bioRxiv/medRxiv](https://api.biorxiv.org/) for registration and repository metadata.
 - [DOI content negotiation](https://www.crossref.org/documentation/retrieve-metadata/content-negotiation/) for bibliographic metadata.
 - [Citation.js](https://citation.js.org/), [citeproc-js by Frank Bennett](https://github.com/Juris-M/citeproc-js) and [Citation Style Language styles](https://github.com/citation-style-language/styles) for reference rendering.
 

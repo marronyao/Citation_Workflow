@@ -1,11 +1,11 @@
 {
   "name": "citation-workflow",
   "version": "0.2.0",
-  "description": "Windows DOI to PubMed PDF and citation workflow",
+  "description": "Windows scholarly full-text search, PDF download and citation workflow",
   "main": "index.js",
   "scripts": {
     "build": "esbuild citation-entry.js --bundle --minify --outfile=vendor/citation.js",
-    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs"
+    "test": "python -m unittest discover -s tests && node tests/test_frontend.cjs && node tests/test_custom_style.cjs && node tests/test_reference_types.cjs"
   },
   "keywords": [],
   "author": "",
