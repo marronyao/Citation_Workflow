@@ -212,7 +212,14 @@ def reference_example(payload):
     results = getjson('https://api.crossref.org/works?'+U.urlencode({'query.bibliographic':example,'rows':3}))['message']['items']
     normalise = lambda value: re.sub(r'[^\w]+',' ',html.unescape(re.sub(r'<[^>]+>','',value))).strip().casefold()
     reference = normalise(example)
-    matches = {item['DOI'] for item in results if item.get('DOI') and any(len(normalise(title)) > 12 and normalise(title) in reference for title in item.get('title',[]))}
+    years = set(re.findall(r'\b(?:18|19|20)\d{2}\b', example))
+    matches = set()
+    for item in results:
+        dates = [str(item.get(field,{}).get('date-parts',[[]])[0][0]) for field in ('issued','published','published-print','published-online') if item.get(field,{}).get('date-parts',[[]])[0]]
+        if years and dates and not years.intersection(dates):
+            continue
+        if item.get('DOI') and any(len(normalise(title)) > 12 and normalise(title) in reference for title in item.get('title',[])):
+            matches.add(item['DOI'])
     if len(matches) != 1:
         raise ValueError('The example paper could not be identified reliably. Add its DOI to the reference and try again.')
     return lookup(next(iter(matches)))

@@ -26,6 +26,13 @@ class CoreTests(unittest.TestCase):
                 server.reference_example({'example':example})
             lookup.assert_not_called()
 
+    def test_example_year_disambiguates_reprinted_article(self):
+        example='Smith A. A distinctive title about neuronal repair. Journal 1952;1:2.'
+        items=[{'DOI':doi,'title':['A distinctive title about neuronal repair'],'issued':{'date-parts':[[year]]}} for doi,year in [('10.1234/original',1952),('10.1234/reprint',1990)]]
+        with patch.object(server,'getjson',return_value={'message':{'items':items}}), patch.object(server,'lookup',return_value={}) as lookup:
+            server.reference_example({'example':example})
+        lookup.assert_called_once_with('10.1234/original')
+
     def test_crossref_abbreviation_fallback(self):
         def getjson(url):
             if 'esearch.fcgi' in url:
