@@ -4,6 +4,8 @@ Find a paper by DOI, preprint ID or repository link, save its PDF and generate a
 
 Citation Workflow is a research tool for biological literature, with a dark interface, direct full-text source search and editable references. The website runs on GitHub Pages; a small local companion for Windows, macOS and Linux handles full-text retrieval and saves PDFs to your chosen folder.
 
+**macOS support is available, but has not undergone complete testing.** Windows and Linux have been verified with real PDF downloads. Native macOS folder selection, browser permissions and end-to-end downloads remain unverified.
+
 **[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Developer’s website](https://marronyao.com/)**
 
 ![Citation Workflow dark interface](docs/dark-preview.png)
@@ -174,7 +176,7 @@ The bundled citation engine is committed so the application works without instal
 | `tests/` | DOI, path, download and formatting checks |
 | `.github/workflows/pages.yml` | Checks and GitHub Pages deployment |
 
-The deployment workflow checks the project on Windows, macOS and Linux and publishes only frontend assets and dependency notices to Pages. It excludes downloaded papers, local settings, Python source and development files from the website artifact. The project source remains available in this public repository.
+The deployment workflow requires Windows and Linux checks before publishing frontend assets and dependency notices to Pages. macOS checks run in a separate workflow and do not block deployment; they do not replace complete native macOS testing. The site artifact excludes downloaded papers, local settings, Python source and development files. The project source remains available in this public repository.
 
 ## Sources and acknowledgements
 
