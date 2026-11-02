@@ -30,3 +30,13 @@ test('download candidates and source redirects remain restricted to approved HTT
   assert.equal(result.ok,false);assert(result.attempts.some(s=>s.includes('Unsupported source URL')));
   assert.equal(sourceError(Error('Source returned HTTP 513')),'access_restricted');
 });
+test('a matching catalogue record can lead through an HTML download intermediary',async()=>{
+  const result=await searchThirdParty(paper,{safeURL,boundedText:r=>r.text(),upstream:async url=>{
+    if(url==='https://sci-hub.ru/intermediary')return new Response('<a href="/paper.pdf">GET</a>');
+    return new Response('<p>10.1234/test</p><a href="/intermediary">Download</a>');
+  },pdfResponse:async url=>{
+    if(url.endsWith('/intermediary'))throw Error('Source did not return a PDF.');
+    assert.equal(url,'https://sci-hub.ru/paper.pdf');return new Response('%PDF-1.7\nTest');
+  }});
+  assert.equal(result.ok,true);assert.equal(result.url,'https://sci-hub.ru/paper.pdf');
+});

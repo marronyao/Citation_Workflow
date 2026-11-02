@@ -10,14 +10,14 @@ const decode=s=>String(s||'').replace(/&amp;/gi,'&').replace(/&quot;/gi,'"').rep
 const text=s=>decode(s.replace(/<[^>]*>/g,' ')).replace(/\s+/g,' ').trim();
 const normal=s=>text(s).toLowerCase().replace(/[^\p{L}\p{N}]+/gu,' ').trim();
 function attrs(tag) {const a={};for(const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g))a[m[1].toLowerCase()]=decode(m[2]??m[3]);return a;}
-export function parseSourcePage(html,base,paper) {
+export function parseSourcePage(html,base,paper,matchedRecord=false) {
   if(/captcha|verify (?:you|that|your)|verifying your browser|just a moment|ddos.guard|diamwall|cf-chl-|проверка.{0,30}робот/i.test(html))return {status:'verification_required',links:[]};
   if(/log\s*in to download|sign\s*in to download|login required|authorization required/i.test(text(html)))return {status:'login_required',links:[]};
   const doi=paper.doi.toLowerCase(),title=normal(paper.csl.title),body=text(html).toLowerCase();
   const metadata={};for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){const a=attrs(tag);if(a.name)metadata[a.name.toLowerCase()]=a.content;}
   const advertisedDOI=metadata.citation_doi?.toLowerCase().replace(/^https?:\/\/(?:dx\.)?doi\.org\//,'');
   if(advertisedDOI&&advertisedDOI!==doi)return {status:'no_match',links:[]};
-  const matches=advertisedDOI===doi||body.includes(doi)||(title.length>=20&&normal(html).includes(title));
+  const matches=matchedRecord||advertisedDOI===doi||body.includes(doi)||(title.length>=20&&normal(html).includes(title));
   const links=[];
   function add(url,kind) {try{const target=new URL(url,base);if(target.protocol==='https:')links.push({url:target.href,kind});}catch{}}
   if(matches) {
@@ -48,18 +48,24 @@ export async function searchThirdParty(paper,io) {
       if(Date.now()>=sourceDeadline){source.attempts.push('Time budget reached.');break;}
       const queue=[{url:entry,kind:'record',matched:false}],seen=new Set();let requests=0;
       while(queue.length&&requests++<4&&Date.now()<sourceDeadline) {
-        const candidate=queue.shift();if(seen.has(candidate.url))continue;seen.add(candidate.url);
+        const candidate=queue.shift(),visit=candidate.kind+':'+candidate.url;if(seen.has(visit))continue;seen.add(visit);
         try {
           io.safeURL(candidate.url);
           const signal=AbortSignal.timeout(Math.max(1,Math.min(9000,sourceDeadline-Date.now())));
           if(candidate.kind==='pdf') {
-            const pdf=await io.pdfResponse(candidate.url,{signal});await pdf.body.cancel();
+            let pdf;
+            try{pdf=await io.pdfResponse(candidate.url,{signal});}
+            catch(error){
+              if(/Source did not return a PDF/.test(error.message)&&new URL(candidate.url).origin===origin){queue.unshift({...candidate,kind:'record',matched:true});continue;}
+              throw error;
+            }
+            await pdf.body.cancel();
             source.status='pdf_verified';source.attempts.push('Matching record found; PDF bytes verified.');
             attempts.push(...source.attempts.map(s=>provider.name+': '+s));
             return {ok:true,url:candidate.url,source:provider.name,attempts,sources,publishers};
           }
           const response=await io.upstream(candidate.url,{signal,headers:{Accept:'text/html'}});
-          const parsed=parseSourcePage(await io.boundedText(response),response.url||candidate.url,paper);
+          const parsed=parseSourcePage(await io.boundedText(response),response.url||candidate.url,paper,candidate.matched);
           source.status=parsed.status;
           if(parsed.status==='verification_required'||parsed.status==='login_required') {source.attempts.push(new URL(candidate.url).hostname+': '+(parsed.status==='verification_required'?'manual browser verification required.':'sign-in required.'));break;}
           if(parsed.status==='no_match')source.attempts.push(new URL(candidate.url).hostname+': no matching downloadable record found.');
