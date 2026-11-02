@@ -1,11 +1,13 @@
 /* Citation Workflow cloud API. No local helper or user filesystem access. */
-const VERSION='0.4.0-2', MAX_PDF=80*1024*1024;
+const VERSION='0.4.1-1', MAX_PDF=80*1024*1024;
 const REPOSITORIES=['arxiv.org','export.arxiv.org','proceedings.mlr.press','proceedings.neurips.cc','openaccess.thecvf.com','aclanthology.org','biorxiv.org','www.biorxiv.org','medrxiv.org','www.medrxiv.org','chemrxiv.org','www.chemrxiv.org'];
 const HOSTS=[...REPOSITORIES,'api.crossref.org','api.datacite.org','doi.org','api.biorxiv.org','pmc.ncbi.nlm.nih.gov','www.ncbi.nlm.nih.gov','pmc-oa-opendata.s3.amazonaws.com','journals.plos.org','www.jstatsoft.org','jstatsoft.org','www.nature.com','nature.com','www.science.org','science.org','elifesciences.org','www.elifesciences.org','peerj.com','www.frontiersin.org','www.mdpi.com','link.springer.com','link.springer.com','academic.oup.com','onlinelibrary.wiley.com','www.cell.com','www.sciencedirect.com','pubs.acs.org','pubs.rsc.org'];
 const enc=new TextEncoder();
+HOSTS.push('linkinghub.elsevier.com','cell.com');
+const UNCONFIGURED_SOURCES=['Sci-Hub','ResearchGate','Z-Library','Library Genesis',"Anna’s Archive"];
 export function safeURL(value) {
   const u=new URL(value);
-  if(u.protocol!=='https:' || u.username || u.password || u.port || !HOSTS.includes(u.hostname)) throw Error('Unsupported source URL.');
+  if(u.protocol!=='https:' || u.username || u.password || u.port || !HOSTS.includes(u.hostname)) throw Error('Unsupported source URL (host: '+u.hostname+').');
   return u;
 }
 export function normalizeIdentifier(value) {
@@ -23,9 +25,9 @@ function clean(s='') {return String(s).replace(/<[^>]*>/g,'').replace(/&#x([\da-
 async function upstream(value, options={}) {
   let url=safeURL(String(value).replace(/^http:\/\//i,'https://'));
   for(let i=0;i<5;i++) {
-    const r=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(18000),headers:{'User-Agent':'CitationWorkflow/0.4.0 (+https://github.com/marronyao/Citation_Workflow)',...options.headers}});
+    const r=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(18000),headers:{'User-Agent':'CitationWorkflow/0.4.1 (+https://github.com/marronyao/Citation_Workflow)',...options.headers}});
     if([301,302,303,307,308].includes(r.status)) {const location=r.headers.get('location');await r.body?.cancel();if(!location) throw Error('Source returned an invalid redirect.');url=safeURL(new URL(location,url));continue;}
-    if(!r.ok){await r.body?.cancel();throw Error('Source returned HTTP '+r.status);}
+    if(!r.ok){await r.body?.cancel();throw Error('Source returned HTTP '+r.status+' ('+url.hostname+')'+([401,403].includes(r.status)?'; access was denied; institutional sign-in or verification may be required.':r.status===429?'; source rate limit reached.':''));}
     return r;
   }
   throw Error('Too many source redirects.');
@@ -42,6 +44,28 @@ function person(s) {s=clean(s);if(s.includes(',')){const [family,...given]=s.spl
 function xmlTag(xml,tag) {return clean(xml.match(new RegExp('<'+tag+'(?:\\s[^>]*)?>([\\s\\S]*?)</'+tag+'>','i'))?.[1]||'');}
 function metaTags(html) {
   const out={};for(const tag of html.match(/<meta\b[^>]*>/gi)||[]){const attrs={};for(const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g))attrs[m[1].toLowerCase()]=clean(m[2]??m[3]);const key=(attrs.name||attrs.property||'').toLowerCase();if(key&&attrs.content)(out[key]??=[]).push(attrs.content);}return out;
+}
+async function publisherPage(url) {
+  // Follow ordinary publisher HTML redirects, never execute scripts or solve challenges.
+  const seen=new Set();
+  for(let i=0;i<3;i++) {
+    url=safeURL(url).href;
+    if(seen.has(url))throw Error('Publisher redirect loop.');seen.add(url);
+    const response=await upstream(url),base=response.url||url,html=await boundedText(response);
+    const pdf=metaTags(html).citation_pdf_url?.[0];
+    if(pdf)return {url:safeURL(new URL(pdf,base)).href,name:'Publisher open access'};
+    let refresh;
+    for(const tag of html.match(/<meta\b[^>]*>/gi)||[]) {
+      const attrs={};for(const m of tag.matchAll(/([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g))attrs[m[1].toLowerCase()]=clean(m[2]??m[3]);
+      if(attrs['http-equiv']?.toLowerCase()==='refresh')refresh=attrs.content?.match(/^\s*\d+(?:\.\d+)?\s*;\s*url\s*=\s*(.*?)\s*$/i)?.[1]?.replace(/^['"]|['"]$/g,'');
+    }
+    if(!refresh) {
+      if(/captcha|verify (?:you|that)|just a moment|cf-chl-/i.test(html))throw Error('Publisher returned a verification page; open the official article in your browser.');
+      return null;
+    }
+    url=safeURL(new URL(refresh,base)).href;
+  }
+  throw Error('Too many publisher page redirects; open the official article in your browser.');
 }
 function paperRecord(identifier,csl,extra={}) {
   if(!csl.title)throw Error('No paper title was returned by the metadata source.');
@@ -120,20 +144,27 @@ async function pmcCandidates(doi) {
 async function searchPaper(paper,ctx) {
   return cached('search:'+paper.identifier,ctx,async()=>{
     const attempts=[],candidates=[...paper.pdf_candidates];
-    if(paper.kind==='journal'&&paper.doi)try{candidates.unshift(...await pmcCandidates(paper.doi));}catch(e){attempts.push('PMC: '+e.message);}
+    if(paper.kind==='journal'&&paper.doi)try{const pmc=await pmcCandidates(paper.doi);candidates.unshift(...pmc);if(!pmc.length)attempts.push('PMC: no matching downloadable PDF was found.');}catch(e){attempts.push('PMC: '+e.message);}
     // Deterministic open-access publisher URLs, tied to the exact requested DOI.
     if(/^10\.1371\//i.test(paper.doi))candidates.push({url:'https://journals.plos.org/'+(paper.doi.split('/')[1].split('.')[1]==='pbio'?'plosbiology':'plosone')+'/article/file?id='+encodeURIComponent(paper.doi)+'&type=printable',name:'PLOS'});
     if(/^10\.18637\/jss\./i.test(paper.doi)) {
       try{const page='https://www.jstatsoft.org/article/view/'+paper.doi.split('.').slice(-2).join('');const html=await boundedText(await upstream(page));const pdf=metaTags(html).citation_pdf_url?.[0]||html.match(/href=["']([^"']*\/article\/(?:view|download)\/[^"']+\/\d+)["']/i)?.[1];if(pdf)candidates.push({url:clean(pdf).replace('/article/view/','/article/download/'),name:'Journal of Statistical Software'});}catch(e){attempts.push('JSS: '+e.message);}
     }
-    if(!candidates.length && paper.doi)try {
-      const landing=await upstream('https://doi.org/'+paper.doi),html=await boundedText(landing),pdf=metaTags(html).citation_pdf_url?.[0];if(pdf)candidates.push({url:pdf,name:'Publisher open access'});
-    }catch(e){attempts.push('Official article: '+e.message);}
-    const seen=new Set();for(const candidate of candidates.slice(0,8)) {
-      if(seen.has(candidate.url))continue;seen.add(candidate.url);
-      try {const pdf=await pdfResponse(candidate.url);await pdf.body.cancel();attempts.push(candidate.name+': PDF verified');return {ok:true,...candidate,source:candidate.name,attempts,publishers:paper.sources};}
-      catch(e){attempts.push(candidate.name+': '+e.message);}
+    const seen=new Set();
+    async function tryCandidates(list) {
+      for(const candidate of list.slice(0,8)) {
+        if(seen.has(candidate.url))continue;seen.add(candidate.url);
+        try {const pdf=await pdfResponse(candidate.url);await pdf.body.cancel();attempts.push(candidate.name+': PDF verified');return {ok:true,...candidate,source:candidate.name,attempts,publishers:paper.sources};}
+        catch(e){attempts.push(candidate.name+': '+e.message);}
+      }
     }
+    const found=await tryCandidates(candidates);if(found)return found;
+    if(paper.doi)try {
+      const candidate=await publisherPage('https://doi.org/'+paper.doi);
+      if(candidate){const found=await tryCandidates([candidate]);if(found)return found;}
+      else attempts.push('Official article: no PDF link was exposed on the publisher page.');
+    }catch(e){attempts.push('Official article: '+e.message);}
+    attempts.push('Not searched: '+UNCONFIGURED_SOURCES.join(', ')+'. These sources are not connected to this cloud service.');
     attempts.push('No accessible PDF was verified. Some publishers require institutional access or block automated cloud requests.');return {ok:false,attempts,publishers:paper.sources,login:paper.publisher};
   },300);
 }
@@ -144,7 +175,7 @@ export default {async fetch(request,env,ctx) {
   if(request.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
   try {
     const url=new URL(request.url);
-    if(request.method==='GET'&&url.pathname==='/api/health')return respond({ok:true,version:'0.4.0',mode:'cloud'});
+    if(request.method==='GET'&&url.pathname==='/api/health')return respond({ok:true,version:VERSION,mode:'cloud'});
     if(env.RATE_LIMITER && !(await env.RATE_LIMITER.limit({key:request.headers.get('CF-Connecting-IP')||'unknown'})).success)return respond({error:'Too many requests. Please wait one minute and try again.'},429);
     if(request.method==='GET'&&url.pathname==='/api/pdf') {
       const ticket=await verify(url.searchParams.get('ticket'),env.SIGNING_KEY,'pdf'),pdf=await pdfResponse(ticket.url);

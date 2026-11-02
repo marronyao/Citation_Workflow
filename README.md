@@ -27,6 +27,8 @@ Limits: **20 papers per batch**, **80 MB per PDF**, **100 MB per ZIP**. Large ba
 
 Cloud retrieval uses original repositories, PMC and an explicit supported publisher domain list. The legacy helper’s headless-browser mirror discovery and Sci-Hub / ResearchGate / Z-Library / Library Genesis / Anna’s Archive automation are **not part of the cloud service**. The UI reports only sources actually checked. PubMed is not queried.
 
+Failed searches list unconnected services as **Not searched**, separately from publisher access errors or unavailable PDFs. Official Elsevier HTTP/HTML resolver redirects are supported with bounded, validated redirects. See [source retrieval diagnostics](docs/source-retrieval.md).
+
 ## Compatibility and validation
 
 The cloud website uses browser APIs on Windows, macOS and Linux without OS setup. **macOS is available but has not undergone complete testing.** Native Safari, iOS and Android downloads have not been fully tested. Browser permissions and download behaviour vary.
