@@ -1,5 +1,5 @@
 const fs = require('fs');
-const styles = require('./node_modules/@citation-js/plugin-csl/lib/styles.json');
+const styles = {...require('./node_modules/@citation-js/plugin-csl/lib/styles.json'), ...require('./vendor/csl/styles.json')};
 let out = '# Third-party notices\n\nCitation rendering uses Citation.js and citeproc-js by Frank Bennett. citeproc-js license text: [vendor/licenses/citeproc-LICENSE.txt](vendor/licenses/citeproc-LICENSE.txt). Source: https://github.com/Juris-M/citeproc-js\n\n';
 for (const [path, pkg] of Object.entries(require('./package-lock.json').packages)) {
   if (path && !path.includes('@esbuild/')) out += `- ${path}: ${pkg.version}; ${pkg.license}\n`;

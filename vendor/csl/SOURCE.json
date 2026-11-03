@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/citation-style-language/styles",
+  "commit": "3220666a2b6918cccfeca3d86f6f7d9ea9661236",
+  "files": {
+    "ama": "american-medical-association",
+    "acs": "american-chemical-society",
+    "chicago": "chicago-author-date",
+    "ieee": "ieee",
+    "mla9": "modern-language-association",
+    "oscola": "oscola"
+  }
+}

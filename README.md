@@ -2,7 +2,7 @@
 
 Find a paper by DOI, preprint ID or repository link, download its PDF and generate an editable citation — directly in your browser.
 
-**[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Release v0.4.1](https://github.com/marronyao/Citation_Workflow/releases/tag/v0.4.1)** · **[Feedback](https://github.com/marronyao/Citation_Workflow/issues/new?template=feedback.yml)**
+**[Open Citation Workflow](https://marronyao.github.io/Citation_Workflow/)** · **[Release v0.5.1](https://github.com/marronyao/Citation_Workflow/releases/tag/v0.5.1)** · **[Feedback](https://github.com/marronyao/Citation_Workflow/issues/new?template=feedback.yml)**
 
 ## Use the website
 
@@ -26,7 +26,7 @@ No login cookies or PDF bytes are uploaded to Cloudflare. The extension has an e
 - Cloud metadata from Crossref, DataCite and original repositories; no localhost connection.
 - Journal articles, preprints and individual PMLR, NeurIPS, CVF and ACL conference-paper pages. Explicit arXiv versions are preserved.
 - Verified PDF retrieval from original repositories, PMC and supported publishers, with DOI-based Sci-Hub, Z-Library and Library Genesis fallback requests. Source history and direct source links explain failed downloads.
-- APA 7, Vancouver, Harvard, BibTeX, RIS / EndNote, and a custom format inferred from a reference example. Editable references, titles and APA proper nouns.
+- APA 7, Vancouver, AMA 11, Harvard, ACS, Chicago 18 (author-date), IEEE, MLA 9, and OSCOLA, ordered for practical relevance to biology with APA first; BibTeX, RIS / EndNote, and a custom format inferred from a reference example follow. Editable references, titles and APA proper nouns.
 - Live batch progress with the current identifier, lookup/retrieval stage, elapsed time, PDF transfer size and ZIP packing status.
 - PDFs named after the article title; ZIP downloads with a report. Invalid or unavailable papers do not stop other items.
 - One public GitHub feedback form: download/citation problem, paper DOI or description, optional contact email. Contact emails are visible publicly.
